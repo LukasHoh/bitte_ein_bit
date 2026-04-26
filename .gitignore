@@ -1,5 +1,0 @@
-# DuckDB customer data — generated locally, never committed
-customer_data/*.duckdb
-customer_data/*.duckdb.wal
-customer_data/*.duckdb-shm
-customer_data/*.duckdb-tmp/
