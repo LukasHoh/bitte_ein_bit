@@ -16,7 +16,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppSkillsRouteImport } from './routes/app.skills'
 import { Route as AppProfileRouteImport } from './routes/app.profile'
-import { Route as AppBackgroundRouteImport } from './routes/app.background'
 
 const NgoRoute = NgoRouteImport.update({
   id: '/ngo',
@@ -53,18 +52,12 @@ const AppProfileRoute = AppProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => AppRoute,
 } as any)
-const AppBackgroundRoute = AppBackgroundRouteImport.update({
-  id: '/background',
-  path: '/background',
-  getParentRoute: () => AppRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/ngo': typeof NgoRoute
-  '/app/background': typeof AppBackgroundRoute
   '/app/profile': typeof AppProfileRoute
   '/app/skills': typeof AppSkillsRoute
   '/app/': typeof AppIndexRoute
@@ -73,7 +66,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/ngo': typeof NgoRoute
-  '/app/background': typeof AppBackgroundRoute
   '/app/profile': typeof AppProfileRoute
   '/app/skills': typeof AppSkillsRoute
   '/app': typeof AppIndexRoute
@@ -84,7 +76,6 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/ngo': typeof NgoRoute
-  '/app/background': typeof AppBackgroundRoute
   '/app/profile': typeof AppProfileRoute
   '/app/skills': typeof AppSkillsRoute
   '/app/': typeof AppIndexRoute
@@ -96,26 +87,17 @@ export interface FileRouteTypes {
     | '/app'
     | '/auth'
     | '/ngo'
-    | '/app/background'
     | '/app/profile'
     | '/app/skills'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/auth'
-    | '/ngo'
-    | '/app/background'
-    | '/app/profile'
-    | '/app/skills'
-    | '/app'
+  to: '/' | '/auth' | '/ngo' | '/app/profile' | '/app/skills' | '/app'
   id:
     | '__root__'
     | '/'
     | '/app'
     | '/auth'
     | '/ngo'
-    | '/app/background'
     | '/app/profile'
     | '/app/skills'
     | '/app/'
@@ -179,25 +161,16 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProfileRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/background': {
-      id: '/app/background'
-      path: '/background'
-      fullPath: '/app/background'
-      preLoaderRoute: typeof AppBackgroundRouteImport
-      parentRoute: typeof AppRoute
-    }
   }
 }
 
 interface AppRouteChildren {
-  AppBackgroundRoute: typeof AppBackgroundRoute
   AppProfileRoute: typeof AppProfileRoute
   AppSkillsRoute: typeof AppSkillsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppBackgroundRoute: AppBackgroundRoute,
   AppProfileRoute: AppProfileRoute,
   AppSkillsRoute: AppSkillsRoute,
   AppIndexRoute: AppIndexRoute,

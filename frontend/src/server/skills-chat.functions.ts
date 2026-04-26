@@ -253,6 +253,118 @@ async function ensureLangGraphThread(threadId: string, userId: string): Promise<
   }
 }
 
+function buildRunJsonBody(
+  assistantId: string,
+  languageCode: string | null,
+  userId: string,
+  userMessage: string,
+) {
+  return {
+    assistant_id: assistantId,
+    input: {
+      messages: [
+        {
+          role: "system" as const,
+          content: languageCode
+            ? `Always respond in language code "${languageCode}".`
+            : "Respond in the same language as the user.",
+        },
+        { role: "user" as const, content: userMessage },
+      ],
+    },
+    metadata: {
+      user_id: userId,
+      language: languageCode,
+    },
+  };
+}
+
+/** Best-effort assistant text from various LangGraph stream chunk shapes. */
+function collectCandidateRepliesForChunk(streamChunk: unknown): string {
+  const candidates: unknown[] = [streamChunk];
+  if (Array.isArray(streamChunk) && streamChunk.length >= 2) {
+    candidates.push(streamChunk[1]);
+  }
+  if (streamChunk && typeof streamChunk === "object") {
+    const o = streamChunk as Record<string, unknown>;
+    if (o.data != null) candidates.push(o.data);
+  }
+  let best = "";
+  for (const c of candidates) {
+    const t = extractAssistantReply(c);
+    if (t.length > best.length) best = t;
+  }
+  return best;
+}
+
+async function* readNdjsonLines(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<string, void, unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      const rest = buffer.trim();
+      if (rest) yield rest;
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim()) yield line;
+    }
+  }
+}
+
+async function* readSseJsonData(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<unknown, void, unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) {
+      if (buffer.trim()) {
+        const blocks = buffer.split("\n\n");
+        for (const block of blocks) {
+          for (const line of block.split("\n")) {
+            const t = line.trim();
+            if (!t.startsWith("data:")) continue;
+            const payload = t.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            try {
+              yield JSON.parse(payload);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const block of parts) {
+      for (const line of block.split("\n")) {
+        const t = line.trim();
+        if (!t.startsWith("data:")) continue;
+        const payload = t.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          yield JSON.parse(payload);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+}
+
 export const sendSkillsChat = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
@@ -271,7 +383,7 @@ export const sendSkillsChat = createServerFn({ method: "POST" })
     if (!convId) {
       const { data: conv, error } = await supabase
         .from("chat_conversations")
-        .insert({ user_id: userId, title: "Skills chat" })
+        .insert({ user_id: userId, title: "Chat" })
         .select("id")
         .single();
       if (error) throw new Error(error.message);
@@ -293,24 +405,7 @@ export const sendSkillsChat = createServerFn({ method: "POST" })
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        assistant_id: assistantId,
-        input: {
-          messages: [
-            {
-              role: "system",
-              content: languageCode
-                ? `Always respond in language code "${languageCode}".`
-                : "Respond in the same language as the user.",
-            },
-            { role: "user", content: data.message },
-          ],
-        },
-        metadata: {
-          user_id: userId,
-          language: languageCode,
-        },
-      }),
+      body: JSON.stringify(buildRunJsonBody(assistantId, languageCode, userId, data.message)),
     });
 
     if (!runRes.ok) {
@@ -341,6 +436,202 @@ export const sendSkillsChat = createServerFn({ method: "POST" })
       selectedSkills,
       error: null as string | null,
     };
+  });
+
+/**
+ * Streams LangGraph output as NDJSON lines: { type: "text", text }, then { type: "end", ... }.
+ * Falls back to /runs/wait when /runs/stream is unavailable.
+ */
+export const streamSkillsChat = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => InputSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("language")
+      .eq("id", userId)
+      .maybeSingle();
+    const languageCode = (profile?.language as string | null | undefined) ?? null;
+    const assistantId = resolveAssistantId(languageCode);
+
+    let convId = data.conversationId;
+    if (!convId) {
+      const { data: conv, error } = await supabase
+        .from("chat_conversations")
+        .insert({ user_id: userId, title: "Chat" })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      convId = conv.id;
+    }
+    if (!convId) {
+      throw new Error("Failed to create conversation.");
+    }
+
+    await supabase
+      .from("chat_messages")
+      .insert({ conversation_id: convId, role: "user", content: data.message });
+
+    await ensureLangGraphThread(convId, userId);
+
+    const runBody = buildRunJsonBody(assistantId, languageCode, userId, data.message);
+    const streamUrl = `${LANGGRAPH_BASE_URL}/threads/${convId}/runs/stream`;
+
+    const streamRes = await fetch(streamUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/x-ndjson, application/json, text/event-stream",
+      },
+      body: JSON.stringify({ ...runBody, stream_mode: "values" }),
+    });
+
+    if (!streamRes.ok) {
+      const waitRes = await fetch(`${LANGGRAPH_BASE_URL}/threads/${convId}/runs/wait`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(runBody),
+      });
+      if (!waitRes.ok) {
+        const txt = await waitRes.text();
+        console.error("LangGraph error (stream + wait)", waitRes.status, txt);
+        return new Response(
+          JSON.stringify({
+            type: "end",
+            conversationId: convId,
+            reply: "Chat backend error.",
+            selectedSkills: [] as SelectedSkill[],
+            newSkills: [] as string[],
+            error: "chat_backend_error",
+          }) + "\n",
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/x-ndjson; charset=utf-8",
+              "Cache-Control": "no-store",
+            },
+          },
+        );
+      }
+      const runOutput = await waitRes.json();
+      const visibleReply = extractAssistantReply(runOutput) || "I could not generate a reply.";
+      const selectedSkills = extractSelectedSkills(runOutput);
+      await supabase
+        .from("chat_messages")
+        .insert({ conversation_id: convId, role: "assistant", content: visibleReply });
+
+      const out =
+        JSON.stringify({ type: "text", text: visibleReply }) +
+        "\n" +
+        JSON.stringify({
+          type: "end",
+          conversationId: convId,
+          reply: visibleReply,
+          selectedSkills,
+          newSkills: selectedSkills.map((s) => s.skill_id),
+          error: null,
+        }) +
+        "\n";
+      return new Response(out, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    const enc = new TextEncoder();
+    let lastChunk: unknown;
+    let lastText = "";
+
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          try {
+            const ct = streamRes.headers.get("content-type") || "";
+            const body = streamRes.body;
+            if (!body) {
+              throw new Error("Empty response body from LangGraph stream");
+            }
+
+            if (ct.includes("text/event-stream")) {
+              for await (const ev of readSseJsonData(body)) {
+                lastChunk = ev;
+                const t = collectCandidateRepliesForChunk(ev);
+                if (t && t !== lastText) {
+                  lastText = t;
+                  controller.enqueue(enc.encode(JSON.stringify({ type: "text", text: t }) + "\n"));
+                }
+              }
+            } else {
+              for await (const line of readNdjsonLines(body)) {
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(line);
+                } catch {
+                  continue;
+                }
+                lastChunk = parsed;
+                const t = collectCandidateRepliesForChunk(parsed);
+                if (t && t !== lastText) {
+                  lastText = t;
+                  controller.enqueue(enc.encode(JSON.stringify({ type: "text", text: t }) + "\n"));
+                }
+              }
+            }
+
+            const finalReply =
+              extractAssistantReply(lastChunk ?? {}) || lastText || "I could not generate a reply.";
+            const selectedSkills = extractSelectedSkills(lastChunk ?? {});
+
+            await supabase.from("chat_messages").insert({
+              conversation_id: convId,
+              role: "assistant",
+              content: finalReply,
+            });
+
+            controller.enqueue(
+              enc.encode(
+                JSON.stringify({
+                  type: "end",
+                  conversationId: convId,
+                  reply: finalReply,
+                  selectedSkills,
+                  newSkills: selectedSkills.map((s) => s.skill_id),
+                  error: null,
+                }) + "\n",
+              ),
+            );
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "Stream failed";
+            controller.enqueue(enc.encode(JSON.stringify({ type: "error", error: msg }) + "\n"));
+            controller.enqueue(
+              enc.encode(
+                JSON.stringify({
+                  type: "end",
+                  conversationId: convId,
+                  reply: "",
+                  selectedSkills: [] as SelectedSkill[],
+                  newSkills: [] as string[],
+                  error: "stream_error",
+                }) + "\n",
+              ),
+            );
+          } finally {
+            controller.close();
+          }
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
   });
 
 export const searchManualSkills = createServerFn({ method: "POST" })

@@ -1,49 +1,72 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { User } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/app/profile")({
   component: ProfilePage,
 });
 
+type ProfileRow = {
+  full_name: string | null;
+  language: string | null;
+  region_id?: string | null;
+  sex?: string | null;
+  salary_importance?: number | null;
+  age?: number | null;
+};
+
 function ProfilePage() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const [fullName, setFullName] = useState("");
   const [language, setLanguage] = useState("en");
-  const [bio, setBio] = useState("");
-  const [region, setRegion] = useState("");
-  const [country, setCountry] = useState("");
+  const [regionId, setRegionId] = useState("");
+  const [regions, setRegions] = useState<Array<{ id: string; name: string }>>([]);
   const [sex, setSex] = useState("");
   const [salaryImportance, setSalaryImportance] = useState<number>(5);
   const [age, setAge] = useState<number | "">("");
   const [saving, setSaving] = useState(false);
+  const isSchemaMismatchError = (message: string | undefined) => {
+    const normalized = String(message ?? "").toLowerCase();
+    return normalized.includes("schema cache") || normalized.includes("does not exist");
+  };
 
   useEffect(() => {
     if (!user) return;
     (async () => {
+      const regionsResponse = await supabase
+        .from("regions")
+        .select("id, name")
+        .order("name", { ascending: true });
+      if (regionsResponse.error) {
+        toast.error(regionsResponse.error.message);
+      } else {
+        setRegions((regionsResponse.data ?? []).map((item) => ({ id: item.id, name: item.name })));
+      }
+
       const response = await supabase
         .from("profiles")
-        .select("full_name, language, bio, region, country, sex, salary_importance, age")
+        .select("full_name, language, region_id, sex, salary_importance, age")
         .eq("id", user.id)
         .maybeSingle();
       let data = response.data;
       let error = response.error;
 
-      // Backward-compatible fallback if new profile columns are not in schema cache yet.
-      if (error && String(error.message).includes("schema cache")) {
+      if (error && isSchemaMismatchError(error.message)) {
         const fallback = await supabase
           .from("profiles")
-          .select("full_name, language, bio")
+          .select("full_name, language")
           .eq("id", user.id)
           .maybeSingle();
-        data = fallback.data;
+        data = fallback.data as typeof data;
         error = fallback.error;
       }
 
@@ -53,14 +76,13 @@ function ProfilePage() {
       }
 
       if (data) {
-        setFullName(data.full_name ?? "");
-        setLanguage(data.language ?? "en");
-        setBio(data.bio ?? "");
-        setRegion((data as any).region ?? "");
-        setCountry((data as any).country ?? "");
-        setSex((data as any).sex ?? "");
-        setSalaryImportance((data as any).salary_importance ?? 5);
-        setAge((data as any).age ?? "");
+        const p = data as ProfileRow;
+        setFullName(p.full_name ?? "");
+        setLanguage(p.language ?? "en");
+        setRegionId(p.region_id ?? "");
+        setSex(p.sex ?? "");
+        setSalaryImportance(p.salary_importance ?? 5);
+        setAge(p.age ?? "");
       }
     })();
   }, [user]);
@@ -71,9 +93,7 @@ function ProfilePage() {
     const fullPayload = {
       full_name: fullName,
       language,
-      bio,
-      region: region || null,
-      country: country || null,
+      region_id: regionId || null,
       sex: sex || null,
       salary_importance: salaryImportance,
       age: age === "" ? null : age,
@@ -81,38 +101,48 @@ function ProfilePage() {
     const fallbackPayload = {
       full_name: fullName,
       language,
-      bio,
     };
 
-    let { error } = await supabase
-      .from("profiles")
-      .update(fullPayload)
-      .eq("id", user.id);
+    let { error } = await supabase.from("profiles").update(fullPayload).eq("id", user.id);
 
-    // Backward-compatible fallback if new profile columns are not in schema cache yet.
-    if (error && String(error.message).includes("schema cache")) {
+    if (error && isSchemaMismatchError(error.message)) {
       const retry = await supabase.from("profiles").update(fallbackPayload).eq("id", user.id);
       error = retry.error;
     }
 
     setSaving(false);
     if (error) toast.error(error.message);
-    else toast.success("Profile saved");
+    else toast.success(t("profile.saved"));
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <h1 className="text-3xl font-bold">Profile</h1>
-      <div className="space-y-4 rounded-2xl border bg-card p-6">
-        <div>
-          <Label htmlFor="full">Full name</Label>
-          <Input id="full" value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={120} />
+    <div className="mx-auto max-w-2xl space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <User className="h-6 w-6" />
         </div>
         <div>
-          <Label htmlFor="lang">Language</Label>
+          <h1 className="text-3xl font-bold tracking-tight">{t("profile.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("profile.lead")}</p>
+        </div>
+      </div>
+
+      <div className="space-y-5 rounded-2xl border border-border/60 bg-card/90 p-6 shadow-sm backdrop-blur-sm md:p-8">
+        <div className="space-y-2">
+          <Label htmlFor="full">{t("profile.fullName")}</Label>
+          <Input
+            id="full"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            maxLength={120}
+            className="h-11 rounded-xl"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lang">{t("profile.language")}</Label>
           <Select value={language} onValueChange={setLanguage}>
-            <SelectTrigger id="lang">
-              <SelectValue placeholder="Select language" />
+            <SelectTrigger id="lang" className="h-11 rounded-xl">
+              <SelectValue placeholder={t("profile.selectLanguage")} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="en">English</SelectItem>
@@ -121,55 +151,63 @@ function ProfilePage() {
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label htmlFor="bio">Short bio</Label>
-          <Textarea
-            id="bio"
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            maxLength={500}
-            rows={4}
-          />
-        </div>
-        <div>
-          <Label htmlFor="region">Region</Label>
-          <Input id="region" value={region} onChange={(e) => setRegion(e.target.value)} maxLength={120} />
-        </div>
-        <div>
-          <Label htmlFor="country">Country</Label>
-          <Input id="country" value={country} onChange={(e) => setCountry(e.target.value)} maxLength={120} />
-        </div>
-        <div>
-          <Label htmlFor="sex">Sex</Label>
-          <Select value={sex || "unspecified"} onValueChange={(value) => setSex(value === "unspecified" ? "" : value)}>
-            <SelectTrigger id="sex">
-              <SelectValue placeholder="Select sex" />
+        <div className="space-y-2">
+          <Label htmlFor="region">{t("profile.region")}</Label>
+          <Select
+            value={regionId || "unspecified"}
+            onValueChange={(value) => setRegionId(value === "unspecified" ? "" : value)}
+          >
+            <SelectTrigger id="region" className="h-11 rounded-xl">
+              <SelectValue placeholder={t("profile.selectRegion")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="unspecified">Prefer not to say</SelectItem>
-              <SelectItem value="female">Female</SelectItem>
-              <SelectItem value="male">Male</SelectItem>
-              <SelectItem value="diverse">Diverse</SelectItem>
+              <SelectItem value="unspecified">{t("profile.preferNotSay")}</SelectItem>
+              {regions.map((region) => (
+                <SelectItem key={region.id} value={region.id}>
+                  {region.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label htmlFor="salary-importance">How important is salary? (1-10)</Label>
+        <div className="space-y-2">
+          <Label htmlFor="sex">{t("profile.sex")}</Label>
+          <Select
+            value={sex || "unspecified"}
+            onValueChange={(value) => setSex(value === "unspecified" ? "" : value)}
+          >
+            <SelectTrigger id="sex" className="h-11 rounded-xl">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unspecified">{t("profile.preferNotSay")}</SelectItem>
+              <SelectItem value="female">{t("profile.sex.female")}</SelectItem>
+              <SelectItem value="male">{t("profile.sex.male")}</SelectItem>
+              <SelectItem value="diverse">{t("profile.sex.diverse")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="salary-importance">
+            {t("profile.salary")}: {salaryImportance}
+          </Label>
           <Input
             id="salary-importance"
-            type="number"
+            type="range"
             min={1}
             max={10}
+            step={1}
             value={salaryImportance}
             onChange={(e) => {
               const next = Number(e.target.value);
               if (Number.isNaN(next)) return;
               setSalaryImportance(Math.max(1, Math.min(10, next)));
             }}
+            className="h-2 cursor-pointer accent-primary"
           />
         </div>
-        <div>
-          <Label htmlFor="age">Age</Label>
+        <div className="space-y-2">
+          <Label htmlFor="age">{t("profile.age")}</Label>
           <Input
             id="age"
             type="number"
@@ -186,10 +224,15 @@ function ProfilePage() {
               if (Number.isNaN(next)) return;
               setAge(Math.max(0, Math.min(120, next)));
             }}
+            className="h-11 rounded-xl"
           />
         </div>
-        <Button onClick={save} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
+        <Button
+          onClick={save}
+          disabled={saving}
+          className="h-11 rounded-full px-8 shadow-md shadow-primary/15"
+        >
+          {saving ? t("common.saving") : t("common.save")}
         </Button>
       </div>
     </div>

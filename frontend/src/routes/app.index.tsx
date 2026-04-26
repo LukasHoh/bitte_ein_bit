@@ -1,178 +1,125 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
+import { Sparkles } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SkillsWorkspace } from "@/components/skills-workspace";
 
 export const Route = createFileRoute("/app/")({
-  component: Dashboard,
+  component: SkillsHomePage,
 });
 
-function Dashboard() {
+function SkillsHomePage() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const [skillsCount, setSkillsCount] = useState(0);
-  const [eduCount, setEduCount] = useState(0);
-  const [expCount, setExpCount] = useState(0);
   const [name, setName] = useState("");
-  const [selectedSkills, setSelectedSkills] = useState<
-    { id: string; name: string; proficiency: string | null; source: string | null; user_quote: string | null }[]
-  >([]);
-  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
-  const formatSkillName = (name: string) =>
-    name
-      .replace(/[_-]+/g, " ")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(" ");
+  const [loading, setLoading] = useState(true);
 
-  const formatTagValue = (value: string | null) =>
-    value ? value.charAt(0).toUpperCase() + value.slice(1).toLowerCase() : null;
-
-  const deleteUserSkill = async (userSkillId: string) => {
-    if (actionBusyId) return;
-    setActionBusyId(userSkillId);
-    try {
-      const { error } = await supabase.from("user_skills").delete().eq("id", userSkillId);
-      if (error) throw error;
-      setSelectedSkills((prev) => prev.filter((skill) => skill.id !== userSkillId));
-      setSkillsCount((prev) => Math.max(0, prev - 1));
-      toast.success("Skill removed.");
-    } catch (error: any) {
-      toast.error(error?.message ?? "Failed to remove skill.");
-    } finally {
-      setActionBusyId(null);
-    }
-  };
+  const loadDashboardStats = useCallback(async () => {
+    if (!user) return;
+    const [{ count: s }, { data: prof }] = await Promise.all([
+      supabase
+        .from("user_skills")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id),
+      supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
+    ]);
+    setSkillsCount(s ?? 0);
+    setName(prof?.full_name ?? "");
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
+    setLoading(true);
     (async () => {
-      const [{ count: s }, { count: e }, { count: x }, { data: prof }, userSkillsResponse] =
-        await Promise.all([
-        supabase.from("user_skills").select("*", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("education").select("*", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("experience").select("*", { count: "exact", head: true }).eq("user_id", user.id),
-        supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
-        supabase
-          .from("user_skills")
-          .select("id, proficiency, source, user_quote, skills(name)")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(12),
-      ]);
-
-      let userSkills = userSkillsResponse.data;
-      // Backward-compatible fallback when optional columns are not available yet.
-      if (
-        userSkillsResponse.error &&
-        (String(userSkillsResponse.error.message).includes("schema cache") ||
-          String(userSkillsResponse.error.message).includes("does not exist"))
-      ) {
-        const fallback = await supabase
-          .from("user_skills")
-          .select("id, proficiency, source, skills(name)")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(12);
-        if (!fallback.error) {
-          userSkills = fallback.data;
-        }
-      }
-
-      setSkillsCount(s ?? 0);
-      setEduCount(e ?? 0);
-      setExpCount(x ?? 0);
-      setName(prof?.full_name ?? "");
-      setSelectedSkills(
-        (userSkills ?? []).map((row: any) => ({
-          id: row.id,
-          name: row.skills?.name ?? "Unknown skill",
-          proficiency: row.proficiency ?? null,
-          source: row.source ?? null,
-          user_quote: row.user_quote ?? null,
-        })),
-      );
+      await loadDashboardStats();
+      setLoading(false);
     })();
-  }, [user]);
+  }, [user, loadDashboardStats]);
 
-  const stats = [
-    { label: "Skills", value: skillsCount, hint: "Add via Skills chat" },
-    { label: "Education entries", value: eduCount, hint: "Education & Experience" },
-    { label: "Experience entries", value: expCount, hint: "Education & Experience" },
-  ];
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-64" />
+          <Skeleton className="h-4 w-full max-w-xl" />
+        </div>
+        <div className="rounded-3xl border border-border/50 bg-gradient-to-br from-primary/[0.07] to-card/80 p-6 sm:p-8">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-4">
+              <Skeleton className="h-12 w-12 shrink-0 rounded-2xl" />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-4 w-full max-w-sm" />
+              </div>
+            </div>
+            <div className="shrink-0 sm:text-end">
+              <Skeleton className="h-12 w-20 sm:ms-auto" />
+              <Skeleton className="mt-1 h-3 w-24 sm:ms-auto" />
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[min(76dvh,32rem)] min-h-64 rounded-3xl" />
+          <Skeleton className="h-96 min-h-64 rounded-3xl" />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold">Welcome{name ? `, ${name}` : ""} 👋</h1>
-        <p className="mt-1 text-muted-foreground">
-          Build your profile so we can match you to the right trainings.
-        </p>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-2xl border bg-card p-6 shadow-sm">
-            <div className="text-sm text-muted-foreground">{s.label}</div>
-            <div className="mt-1 text-4xl font-bold">{s.value}</div>
-            <div className="mt-2 text-xs text-muted-foreground">{s.hint}</div>
+    <div className="space-y-10">
+      <section
+        className="relative overflow-hidden rounded-3xl border border-border/50 bg-gradient-to-br from-primary/[0.08] via-card/95 to-card/80 shadow-sm shadow-primary/[0.03] ring-1 ring-border/30 backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 duration-500"
+        aria-label={t("dash.heroTitle")}
+      >
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_80%_50%_at_20%_0%,hsl(var(--primary)/0.12),transparent)]" />
+        <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between sm:gap-8 sm:p-8">
+          <div className="flex min-w-0 flex-1 items-start gap-4">
+            <div
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-primary shadow-inner shadow-primary/5"
+              aria-hidden
+            >
+              <Sparkles className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <h2 className="text-lg font-semibold leading-snug text-foreground sm:text-xl">
+                {t("dash.heroTitle")}
+              </h2>
+              <p className="text-pretty text-sm leading-relaxed text-muted-foreground sm:max-w-lg">
+                {skillsCount === 0 ? t("dash.heroEmpty") : t("dash.heroWithSkills")}
+              </p>
+            </div>
           </div>
-        ))}
-      </div>
-
-      <div className="rounded-2xl border bg-card p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold">My selected skills</h2>
-          <Button asChild size="sm" variant="outline">
-            <Link to="/app/skills">Add skills</Link>
-          </Button>
+          <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end sm:text-end">
+            <div>
+              <p className="text-4xl font-bold tabular-nums leading-none tracking-tight text-foreground sm:text-5xl">
+                {skillsCount}
+              </p>
+              <p className="mt-1.5 text-xs font-medium leading-snug text-muted-foreground sm:max-w-[10rem] sm:text-end">
+                {skillsCount === 0
+                  ? t("dash.tallySubZero")
+                  : skillsCount === 1
+                    ? t("dash.tallySubOne")
+                    : t("dash.tallySubMany")}
+              </p>
+            </div>
+            <Button
+              asChild
+              size="sm"
+              className="w-full rounded-full shadow-md shadow-primary/10 sm:w-auto"
+            >
+              <a href="#skills-workspace">{t("dash.addSkillsCta")}</a>
+            </Button>
+          </div>
         </div>
-        {selectedSkills.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            No selected skills yet. Use Skills chat to add and accept skills.
-          </p>
-        ) : (
-          <ul className="mt-3 space-y-2">
-            {selectedSkills.map((skill) => (
-              <li key={skill.id} className="rounded-md border px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">{formatSkillName(skill.name)}</Badge>
-                    {skill.proficiency ? (
-                      <span className="text-xs text-muted-foreground">
-                        Level: {formatTagValue(skill.proficiency)}
-                      </span>
-                    ) : null}
-                    {skill.source ? (
-                      <span className="text-xs text-muted-foreground">
-                        Source: {formatTagValue(skill.source)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => deleteUserSkill(skill.id)}
-                    disabled={actionBusyId === skill.id}
-                  >
-                    {actionBusyId === skill.id ? "Deleting..." : "Delete"}
-                  </Button>
-                </div>
-                {skill.user_quote ? (
-                  <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-                    "{skill.user_quote}"
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      </section>
+
+      <SkillsWorkspace onUserSkillsMutated={loadDashboardStats} showBackLink={false} />
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { AmbientBackground } from "@/components/ambient-background";
 import { Upload, FileText, BarChart3, Users, Building2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,8 +28,12 @@ function NgoDashboard() {
 
   if (loading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        {t("common.loading")}
+      <div className="relative flex min-h-screen items-center justify-center">
+        <AmbientBackground />
+        <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-card/80 px-8 py-5 shadow-lg backdrop-blur-md">
+          <div className="h-2 w-2 animate-ping rounded-full bg-primary" />
+          <span className="text-sm font-medium text-muted-foreground">{t("common.loading")}</span>
+        </div>
       </div>
     );
   }
@@ -45,17 +51,20 @@ function NgoDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto flex items-center justify-between px-6 py-4">
-          <Link to="/ngo" className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-md" style={{ background: "var(--gradient-hero)" }} />
-            <span className="font-semibold">UNMAPPED — NGO Portal</span>
+    <div className="relative min-h-screen">
+      <AmbientBackground />
+      <header className="sticky top-0 z-50 border-b border-border/40 bg-card/70 backdrop-blur-xl">
+        <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+          <Link to="/ngo" className="group flex min-w-0 items-center gap-2.5">
+            <div
+              className="h-8 w-8 shrink-0 rounded-lg shadow-md shadow-primary/20 transition group-hover:scale-105"
+              style={{ background: "var(--gradient-hero)" }}
+            />
+            <span className="truncate font-semibold tracking-tight">UNMAPPED — NGO Portal</span>
           </Link>
           <div className="flex items-center gap-2">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {user.email}
-            </span>
+            <span className="hidden text-sm text-muted-foreground sm:inline">{user.email}</span>
+            <ThemeToggle />
             <LanguageSwitcher />
             <Button
               variant="ghost"
