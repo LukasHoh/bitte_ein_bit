@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { getProfileRegion } from "@/server/profile.functions";
@@ -8,6 +8,19 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Slider } from "@/components/ui/slider";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Briefcase,
   TrendingUp,
@@ -17,8 +30,11 @@ import {
   BarChart2,
   RefreshCw,
   Info,
+  SlidersHorizontal,
+  ChevronDown,
+  RotateCcw,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatEscoDisplayLabel, looksLikeUuid } from "@/lib/utils";
 import { toast } from "sonner";
 import { runMatching, type OccupationResult, type MatchingRunResult } from "@/server/matching.functions";
 
@@ -88,10 +104,128 @@ function fmt(value: number | null | undefined, unit = ""): string {
   return `${Math.round(value * 10) / 10}${unit}`;
 }
 
+function fmtUsd(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `$${Math.round(value * 10) / 10}`;
+}
+
 function scoreColor(score: number): string {
   if (score >= 0.7) return "text-emerald-500";
   if (score >= 0.4) return "text-amber-500";
   return "text-muted-foreground";
+}
+
+// ---------------------------------------------------------------------------
+// Sort, filter & weighted-ranking helpers
+// ---------------------------------------------------------------------------
+
+type SortKey =
+  | "composite"
+  | "skill"
+  | "earnings"
+  | "demand"
+  | "hours_low"
+  | "informality_low";
+
+type Weights = {
+  skill: number;
+  earnings: number;
+  demand: number;
+  hours: number;
+  informality: number;
+};
+
+const DEFAULT_WEIGHTS: Weights = {
+  skill: 1.0,
+  earnings: 0.0,
+  demand: 0.0,
+  hours: 0.0,
+  informality: 0.0,
+};
+
+type Range = { min: number; max: number; hasData: boolean };
+type Ranges = {
+  earnings: Range;
+  demand: Range;
+  hours: Range;
+  informality: Range;
+};
+
+function rangeOf(values: Array<number | null | undefined>): Range {
+  const nums = values.filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v),
+  );
+  if (nums.length === 0) return { min: 0, max: 0, hasData: false };
+  return { min: Math.min(...nums), max: Math.max(...nums), hasData: true };
+}
+
+function computeRanges(occs: OccupationResult[]): Ranges {
+  return {
+    earnings: rangeOf(occs.map((o) => o.earnings_value_local)),
+    demand: rangeOf(occs.map((o) => o.occupation_demand_level)),
+    hours: rangeOf(occs.map((o) => o.hours_worked)),
+    informality: rangeOf(occs.map((o) => o.informality_rate)),
+  };
+}
+
+// Min-max normalize a raw signal into [0, 1] across the visible result set.
+// `lowerIsBetter` flips the scale so that a lower raw value becomes a higher
+// normalized score (used for hours/week and informality).
+function normalize(
+  value: number | null | undefined,
+  range: Range,
+  lowerIsBetter = false,
+): number {
+  if (value == null || !Number.isFinite(value) || !range.hasData) return 0;
+  if (range.max === range.min) return 1;
+  const norm = (value - range.min) / (range.max - range.min);
+  return lowerIsBetter ? 1 - norm : norm;
+}
+
+function compositeScore(
+  occ: OccupationResult,
+  weights: Weights,
+  ranges: Ranges,
+): number {
+  return (
+    weights.skill * occ.base_skill_score +
+    weights.earnings * normalize(occ.earnings_value_local, ranges.earnings) +
+    weights.demand * normalize(occ.occupation_demand_level, ranges.demand) +
+    weights.hours * normalize(occ.hours_worked, ranges.hours, true) +
+    weights.informality *
+      normalize(occ.informality_rate, ranges.informality, true)
+  );
+}
+
+function compareOccupations(
+  a: OccupationResult,
+  b: OccupationResult,
+  sortKey: SortKey,
+  weights: Weights,
+  ranges: Ranges,
+): number {
+  switch (sortKey) {
+    case "composite":
+      return compositeScore(b, weights, ranges) - compositeScore(a, weights, ranges);
+    case "skill":
+      return b.base_skill_score - a.base_skill_score;
+    case "earnings":
+      return (
+        (b.earnings_value_local ?? -Infinity) -
+        (a.earnings_value_local ?? -Infinity)
+      );
+    case "demand":
+      return (
+        (b.occupation_demand_level ?? -Infinity) -
+        (a.occupation_demand_level ?? -Infinity)
+      );
+    case "hours_low":
+      return (a.hours_worked ?? Infinity) - (b.hours_worked ?? Infinity);
+    case "informality_low":
+      return (a.informality_rate ?? Infinity) - (b.informality_rate ?? Infinity);
+    default:
+      return 0;
+  }
 }
 
 function ScorePill({
@@ -118,17 +252,34 @@ function OccupationCard({
   result,
   rank,
   t,
+  skillLabels,
 }: {
   result: OccupationResult;
   rank: number;
   t: (key: string) => string;
+  skillLabels: Record<string, string>;
 }) {
-  const label =
-    result.occupation_label ?? result.occupation_uri.split("/").pop() ?? "Unknown";
+  const occupationFallback =
+    result.occupation_uri.split("/").pop() ?? "Unknown";
+  const label = result.occupation_label
+    ? formatEscoDisplayLabel(result.occupation_label)
+    : looksLikeUuid(occupationFallback)
+      ? occupationFallback
+      : formatEscoDisplayLabel(occupationFallback.replaceAll("_", " "));
 
-  const shortUri = (uri: string) => {
-    const parts = uri.split("/");
-    return parts[parts.length - 1] ?? uri;
+  // Prefer the human-readable preferredLabel from ESCO; fall back to the URI
+  // tail (a UUID) only when the matching backend couldn't supply a label.
+  const skillName = (uri: string) => {
+    const fromIndex = skillLabels[uri];
+    const raw =
+      fromIndex && fromIndex.trim()
+        ? fromIndex
+        : (() => {
+            const parts = uri.split("/");
+            return parts[parts.length - 1] ?? uri;
+          })();
+    if (looksLikeUuid(raw)) return raw;
+    return formatEscoDisplayLabel(raw.replaceAll("_", " "));
   };
 
   return (
@@ -196,7 +347,7 @@ function OccupationCard({
               <ScorePill
                 icon={Banknote}
                 label={t("match.earnings")}
-                value={fmt(result.earnings_value_local)}
+                value={fmtUsd(result.earnings_value_local)}
               />
             )}
             {result.occupation_demand_level != null && (
@@ -244,8 +395,13 @@ function OccupationCard({
                       </p>
                       <div className="flex flex-wrap gap-1">
                         {result.matched_input_skills.map((uri) => (
-                          <Badge key={uri} variant="outline" className="text-xs font-normal">
-                            {shortUri(uri)}
+                          <Badge
+                            key={uri}
+                            variant="outline"
+                            className="text-xs font-normal"
+                            title={uri}
+                          >
+                            {skillName(uri)}
                           </Badge>
                         ))}
                       </div>
@@ -262,8 +418,9 @@ function OccupationCard({
                             key={uri}
                             variant="outline"
                             className="border-rose-200 text-xs font-normal text-rose-600 dark:border-rose-800 dark:text-rose-400"
+                            title={uri}
                           >
-                            {shortUri(uri)}
+                            {skillName(uri)}
                           </Badge>
                         ))}
                       </div>
@@ -276,6 +433,269 @@ function OccupationCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sort & weight controls
+// ---------------------------------------------------------------------------
+
+function WeightSlider({
+  label,
+  hint,
+  icon: Icon,
+  value,
+  onChange,
+  disabled,
+  hasData,
+  noDataLabel,
+}: {
+  label: string;
+  hint: string;
+  icon: React.ElementType;
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+  hasData: boolean;
+  noDataLabel: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-border/40 bg-background/40 p-3 transition",
+        disabled && "opacity-60",
+      )}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+          <Icon className="h-3.5 w-3.5 text-primary" />
+          {label}
+        </div>
+        <span
+          className={cn(
+            "rounded-full px-2 py-0.5 text-[10px] font-mono tabular-nums",
+            value > 0
+              ? "bg-primary/10 text-primary"
+              : "bg-muted text-muted-foreground",
+          )}
+        >
+          {value.toFixed(2)}
+        </span>
+      </div>
+      <Slider
+        min={0}
+        max={1}
+        step={0.05}
+        value={[value]}
+        onValueChange={(v) => onChange(v[0] ?? 0)}
+        disabled={disabled || !hasData}
+      />
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+        {hasData ? hint : noDataLabel}
+      </p>
+    </div>
+  );
+}
+
+function SortAndTunePanel({
+  open,
+  onOpenChange,
+  sortKey,
+  setSortKey,
+  weights,
+  setWeights,
+  minSkillFilter,
+  setMinSkillFilter,
+  filtersActive,
+  onReset,
+  ranges,
+  t,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  sortKey: SortKey;
+  setSortKey: (v: SortKey) => void;
+  weights: Weights;
+  setWeights: (w: Weights) => void;
+  minSkillFilter: number;
+  setMinSkillFilter: (v: number) => void;
+  filtersActive: boolean;
+  onReset: () => void;
+  ranges: Ranges;
+  t: (key: string) => string;
+}) {
+  const updateWeight = (key: keyof Weights, value: number) =>
+    setWeights({ ...weights, [key]: value });
+
+  const compositeMode = sortKey === "composite";
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <div className="rounded-2xl border border-border/60 bg-card/80 shadow-sm backdrop-blur-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex items-center gap-2 text-sm font-medium text-foreground transition hover:text-primary"
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              <span>{t("match.sortFilter")}</span>
+              {filtersActive && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  {t("match.active")}
+                </span>
+              )}
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform",
+                  open && "rotate-180",
+                )}
+              />
+            </button>
+          </CollapsibleTrigger>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {t("match.sortBy")}
+              </span>
+              <Select
+                value={sortKey}
+                onValueChange={(v) => setSortKey(v as SortKey)}
+              >
+                <SelectTrigger className="h-8 min-w-[180px] rounded-full text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="composite">
+                    {t("match.sort.composite")}
+                  </SelectItem>
+                  <SelectItem value="skill">{t("match.sort.skill")}</SelectItem>
+                  <SelectItem value="earnings" disabled={!ranges.earnings.hasData}>
+                    {t("match.sort.earnings")}
+                  </SelectItem>
+                  <SelectItem value="demand" disabled={!ranges.demand.hasData}>
+                    {t("match.sort.demand")}
+                  </SelectItem>
+                  <SelectItem value="hours_low" disabled={!ranges.hours.hasData}>
+                    {t("match.sort.hoursLow")}
+                  </SelectItem>
+                  <SelectItem
+                    value="informality_low"
+                    disabled={!ranges.informality.hasData}
+                  >
+                    {t("match.sort.informalityLow")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {filtersActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onReset}
+                className="h-8 rounded-full px-3 text-xs"
+              >
+                <RotateCcw className="mr-1 h-3 w-3" />
+                {t("match.reset")}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <CollapsibleContent>
+          <div className="space-y-4 border-t border-border/40 px-4 py-4">
+            {/* Filter: minimum skill match */}
+            <div className="rounded-xl border border-border/40 bg-background/40 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-foreground">
+                  {t("match.minSkillMatch")}
+                </div>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-mono tabular-nums text-muted-foreground">
+                  ≥ {pct(minSkillFilter)}
+                </span>
+              </div>
+              <Slider
+                min={0}
+                max={1}
+                step={0.01}
+                value={[minSkillFilter]}
+                onValueChange={(v) => setMinSkillFilter(v[0] ?? 0)}
+              />
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                {t("match.minSkillMatchHint")}
+              </p>
+            </div>
+
+            {/* Weight sliders — only meaningful in composite mode */}
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <p className="text-xs font-medium text-foreground">
+                  {t("match.weights")}
+                </p>
+                {!compositeMode && (
+                  <span className="text-[11px] text-muted-foreground">
+                    ({t("match.weightsDisabled")})
+                  </span>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <WeightSlider
+                  label={t("match.weight.skill")}
+                  hint={t("match.weight.skillHint")}
+                  icon={TrendingUp}
+                  value={weights.skill}
+                  onChange={(v) => updateWeight("skill", v)}
+                  disabled={!compositeMode}
+                  hasData
+                  noDataLabel=""
+                />
+                <WeightSlider
+                  label={t("match.weight.earnings")}
+                  hint={t("match.weight.earningsHint")}
+                  icon={Banknote}
+                  value={weights.earnings}
+                  onChange={(v) => updateWeight("earnings", v)}
+                  disabled={!compositeMode}
+                  hasData={ranges.earnings.hasData}
+                  noDataLabel={t("match.noDataForWeight")}
+                />
+                <WeightSlider
+                  label={t("match.weight.demand")}
+                  hint={t("match.weight.demandHint")}
+                  icon={BarChart2}
+                  value={weights.demand}
+                  onChange={(v) => updateWeight("demand", v)}
+                  disabled={!compositeMode}
+                  hasData={ranges.demand.hasData}
+                  noDataLabel={t("match.noDataForWeight")}
+                />
+                <WeightSlider
+                  label={t("match.weight.hours")}
+                  hint={t("match.weight.hoursHint")}
+                  icon={Clock}
+                  value={weights.hours}
+                  onChange={(v) => updateWeight("hours", v)}
+                  disabled={!compositeMode}
+                  hasData={ranges.hours.hasData}
+                  noDataLabel={t("match.noDataForWeight")}
+                />
+                <WeightSlider
+                  label={t("match.weight.informality")}
+                  hint={t("match.weight.informalityHint")}
+                  icon={AlertTriangle}
+                  value={weights.informality}
+                  onChange={(v) => updateWeight("informality", v)}
+                  disabled={!compositeMode}
+                  hasData={ranges.informality.hasData}
+                  noDataLabel={t("match.noDataForWeight")}
+                />
+              </div>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 }
 
@@ -301,7 +721,47 @@ function MatchingPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sort, weight & filter state — applied client-side over the result set.
+  const [sortKey, setSortKey] = useState<SortKey>("composite");
+  const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS);
+  const [minSkillFilter, setMinSkillFilter] = useState(0);
+  const [controlsOpen, setControlsOpen] = useState(false);
+
   const hasAutoRun = useRef(false);
+
+  // Reset controls whenever a fresh result arrives (so old filters from a
+  // previous run don't accidentally hide everything).
+  const resetControls = useCallback(() => {
+    setSortKey("composite");
+    setWeights(DEFAULT_WEIGHTS);
+    setMinSkillFilter(0);
+  }, []);
+
+  // Compute the visible / sorted occupation list. Memoized so we only recompute
+  // when the underlying result, sort, weights or filter actually change.
+  const ranges = useMemo<Ranges>(
+    () => (result ? computeRanges(result.occupations) : computeRanges([])),
+    [result],
+  );
+
+  const visibleOccupations = useMemo<OccupationResult[]>(() => {
+    if (!result) return [];
+    const filtered = result.occupations.filter(
+      (o) => o.base_skill_score >= minSkillFilter,
+    );
+    return [...filtered].sort((a, b) =>
+      compareOccupations(a, b, sortKey, weights, ranges),
+    );
+  }, [result, sortKey, weights, ranges, minSkillFilter]);
+
+  // True when the user actively narrowed the result set vs. defaults.
+  const filtersActive = sortKey !== "composite" ||
+    weights.skill !== DEFAULT_WEIGHTS.skill ||
+    weights.earnings !== DEFAULT_WEIGHTS.earnings ||
+    weights.demand !== DEFAULT_WEIGHTS.demand ||
+    weights.hours !== DEFAULT_WEIGHTS.hours ||
+    weights.informality !== DEFAULT_WEIGHTS.informality ||
+    minSkillFilter > 0;
 
   const loadProfile = useCallback(async () => {
     if (!user) return;
@@ -453,24 +913,63 @@ function MatchingPage() {
                   </p>
                 </div>
                 <Badge variant="secondary" className="text-xs">
-                  {result.occupations.length}{" "}
-                  {result.occupations.length === 1 ? "match" : "matches"}
+                  {visibleOccupations.length === result.occupations.length
+                    ? `${result.occupations.length} ${
+                        result.occupations.length === 1 ? "match" : "matches"
+                      }`
+                    : `${visibleOccupations.length} / ${result.occupations.length} ${
+                        result.occupations.length === 1 ? "match" : "matches"
+                      }`}
                 </Badge>
               </div>
+
+              {result.occupations.length > 0 && (
+                <SortAndTunePanel
+                  open={controlsOpen}
+                  onOpenChange={setControlsOpen}
+                  sortKey={sortKey}
+                  setSortKey={setSortKey}
+                  weights={weights}
+                  setWeights={setWeights}
+                  minSkillFilter={minSkillFilter}
+                  setMinSkillFilter={setMinSkillFilter}
+                  filtersActive={filtersActive}
+                  onReset={resetControls}
+                  ranges={ranges}
+                  t={t}
+                />
+              )}
 
               {result.occupations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/60 py-16 text-center">
                   <Briefcase className="h-10 w-10 text-muted-foreground/40" />
                   <p className="text-sm text-muted-foreground">{t("match.emptyResults")}</p>
                 </div>
+              ) : visibleOccupations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/60 py-16 text-center">
+                  <SlidersHorizontal className="h-10 w-10 text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground">
+                    {t("match.filteredOut")}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={resetControls}
+                    className="rounded-full"
+                  >
+                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                    {t("match.resetFilters")}
+                  </Button>
+                </div>
               ) : (
                 <div className="space-y-3">
-                  {result.occupations.map((occ, idx) => (
+                  {visibleOccupations.map((occ, idx) => (
                     <OccupationCard
                       key={occ.occupation_uri}
                       result={occ}
                       rank={idx + 1}
                       t={t}
+                      skillLabels={result.skill_labels}
                     />
                   ))}
                 </div>

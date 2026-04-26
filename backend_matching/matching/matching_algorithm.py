@@ -32,6 +32,7 @@ class MatchRequest:
     include_hierarchy: bool = True
     hierarchy_decay: float = 0.6
     related_decay: float = 0.5
+    essential_floor: float = 0.0
 
 
 @dataclass
@@ -84,6 +85,7 @@ class MatchingAlgorithm:
             include_hierarchy=request.include_hierarchy,
             hierarchy_decay=request.hierarchy_decay,
             related_decay=request.related_decay,
+            essential_floor=request.essential_floor,
         )
         merged = self._merge_by_occupation_uri(matches, request)
         return self._to_response_json(request, merged)
@@ -148,6 +150,23 @@ class MatchingAlgorithm:
     def _to_response_json(
         self, request: MatchRequest, occupations: list[OccupationSignals]
     ) -> dict[str, Any]:
+        # Build a URI -> human-readable label map for every skill URI that
+        # appears in matched_input_skills / missing_essential_skills, plus the
+        # input skill URIs (so the UI can show labels even when the user's
+        # skill didn't end up matching anywhere). Restricting the dictionary
+        # to URIs actually mentioned in this response keeps the payload small.
+        referenced: set[str] = set(request.skills.keys())
+        for occupation in occupations:
+            referenced.update(occupation.matched_input_skills)
+            referenced.update(occupation.missing_essential_skills)
+
+        skill_labels_index = self.skill_matcher.skill_labels
+        skill_labels = {
+            uri: skill_labels_index[uri]
+            for uri in referenced
+            if uri in skill_labels_index and skill_labels_index[uri]
+        }
+
         return {
             "context": {
                 "country": request.country,
@@ -157,6 +176,7 @@ class MatchingAlgorithm:
                 "top_k": request.top_k,
             },
             "occupations": [asdict(o) for o in occupations],
+            "skill_labels": skill_labels,
         }
 
 

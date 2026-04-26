@@ -116,6 +116,7 @@ def run_matching(payload: MatchingRunRequest, request: Request) -> dict[str, Any
             include_hierarchy=payload.include_hierarchy,
             hierarchy_decay=payload.hierarchy_decay,
             related_decay=payload.related_decay,
+            essential_floor=payload.essential_floor,
         )
         return algorithm.run(match_request)
     except Exception as exc:

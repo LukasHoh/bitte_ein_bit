@@ -16,6 +16,16 @@ class MatchingRunRequest(BaseModel):
     include_hierarchy: bool = True
     hierarchy_decay: float = Field(default=0.6, ge=0.0, le=1.0)
     related_decay: float = Field(default=0.5, ge=0.0, le=1.0)
+    essential_floor: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum essential-skill coverage [0, 1] required for an occupation to "
+            "appear in the results. 0.0 (default) lets top_k + sort decide; raise it "
+            "to filter for tightly-targeted skill profiles."
+        ),
+    )
 
     @validator("country")
     def normalize_country(cls, value: str) -> str:

@@ -52,6 +52,13 @@ export type MatchingRunResult = {
     top_k: number;
   };
   occupations: OccupationResult[];
+  /**
+   * Map of ESCO skill URI -> preferred English label, covering every URI
+   * referenced in `occupations[].matched_input_skills` /
+   * `occupations[].missing_essential_skills` and every input skill URI. Used
+   * by the UI to display human-readable skill names instead of UUIDs.
+   */
+  skill_labels: Record<string, string>;
   /** Skills from the user's profile (DuckDB user_skills). */
   profile_skill_count: number;
   /** Skills successfully mapped to an ESCO concept URI. */
@@ -139,9 +146,14 @@ export const runMatching = createServerFn({ method: "POST" })
       throw new Error(`Matching API error ${response.status}: ${txt}`);
     }
 
-    const result = await response.json();
+    const result = (await response.json()) as {
+      context: MatchingRunResult["context"];
+      occupations: OccupationResult[];
+      skill_labels?: Record<string, string>;
+    };
     return {
-      ...(result as { context: MatchingRunResult["context"]; occupations: OccupationResult[] }),
+      ...result,
+      skill_labels: result.skill_labels ?? {},
       profile_skill_count: rows.length,
       skill_count: Object.keys(skills).length,
     } as MatchingRunResult;

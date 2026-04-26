@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AmbientBackground } from "@/components/ambient-background";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -26,6 +27,18 @@ function AuthPage() {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [signupRole, setSignupRole] = useState<"seeker" | "ngo">("seeker");
+
+  // Render the actual form only after the client mounts. The reason: password
+  // managers (Dashlane, 1Password, LastPass…) inject icon overlays as extra
+  // child nodes next to <input type="email|password"> *between* SSR and
+  // hydration, which makes React 19 throw "Hydration failed". Skipping SSR for
+  // the form leaves the extension nothing to attach to until after hydration
+  // is already complete. `suppressHydrationWarning` alone doesn't help here
+  // because it doesn't suppress mismatches caused by *extra* DOM children.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!loading && user) navigate({ to: destinationFor(roles) });
@@ -93,127 +106,153 @@ function AuthPage() {
             <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{t("auth.welcome")}</h1>
             <p className="mt-1 text-sm text-muted-foreground">{t("auth.subtitle")}</p>
 
-            <Tabs defaultValue="signin" className="mt-8">
-              <TabsList className="grid h-11 w-full grid-cols-2 rounded-full bg-muted/50 p-1">
-                <TabsTrigger value="signin" className="rounded-full data-[state=active]:shadow-sm">
-                  {t("common.signIn")}
-                </TabsTrigger>
-                <TabsTrigger value="signup" className="rounded-full data-[state=active]:shadow-sm">
-                  {t("common.signUp")}
-                </TabsTrigger>
-              </TabsList>
+            {mounted ? (
+              <Tabs defaultValue="signin" className="mt-8">
+                <TabsList className="grid h-11 w-full grid-cols-2 rounded-full bg-muted/50 p-1">
+                  <TabsTrigger value="signin" className="rounded-full data-[state=active]:shadow-sm">
+                    {t("common.signIn")}
+                  </TabsTrigger>
+                  <TabsTrigger value="signup" className="rounded-full data-[state=active]:shadow-sm">
+                    {t("common.signUp")}
+                  </TabsTrigger>
+                </TabsList>
 
-              <TabsContent value="signin">
-                <form onSubmit={onSignIn} className="mt-6 space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="si-email">{t("common.email")}</Label>
-                    <Input
-                      id="si-email"
-                      name="email"
-                      type="email"
-                      required
-                      className="h-11 rounded-xl transition focus-visible:ring-2"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="si-pw">{t("common.password")}</Label>
-                    <Input
-                      id="si-pw"
-                      name="password"
-                      type="password"
-                      required
-                      minLength={6}
-                      className="h-11 rounded-xl transition focus-visible:ring-2"
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="h-11 w-full rounded-full shadow-md shadow-primary/20 transition duration-300 hover:shadow-lg"
-                    disabled={busy}
-                  >
-                    {busy ? t("auth.signingIn") : t("common.signIn")}
-                  </Button>
-                </form>
-              </TabsContent>
-
-              <TabsContent value="signup">
-                <form onSubmit={onSignUp} className="mt-6 space-y-4">
-                  <div>
-                    <Label>{t("auth.role.label")}</Label>
-                    <RadioGroup
-                      value={signupRole}
-                      onValueChange={(v) => setSignupRole(v as "seeker" | "ngo")}
-                      className="mt-2 grid grid-cols-2 gap-2"
+                <TabsContent value="signin">
+                  <form onSubmit={onSignIn} className="mt-6 space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="si-email">{t("common.email")}</Label>
+                      <Input
+                        id="si-email"
+                        name="email"
+                        type="email"
+                        required
+                        className="h-11 rounded-xl transition focus-visible:ring-2"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="si-pw">{t("common.password")}</Label>
+                      <Input
+                        id="si-pw"
+                        name="password"
+                        type="password"
+                        required
+                        minLength={6}
+                        className="h-11 rounded-xl transition focus-visible:ring-2"
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      className="h-11 w-full rounded-full shadow-md shadow-primary/20 transition duration-300 hover:shadow-lg"
+                      disabled={busy}
                     >
-                      <Label
-                        htmlFor="role-seeker"
-                        className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm transition duration-200 hover:border-primary/40 ${
-                          signupRole === "seeker"
-                            ? "border-primary bg-primary/8 shadow-sm"
-                            : "border-border/80"
-                        }`}
+                      {busy ? t("auth.signingIn") : t("common.signIn")}
+                    </Button>
+                  </form>
+                </TabsContent>
+
+                <TabsContent value="signup">
+                  <form onSubmit={onSignUp} className="mt-6 space-y-4">
+                    <div>
+                      <Label>{t("auth.role.label")}</Label>
+                      <RadioGroup
+                        value={signupRole}
+                        onValueChange={(v) => setSignupRole(v as "seeker" | "ngo")}
+                        className="mt-2 grid grid-cols-2 gap-2"
                       >
-                        <RadioGroupItem id="role-seeker" value="seeker" />
-                        {t("auth.role.seeker")}
+                        <Label
+                          htmlFor="role-seeker"
+                          className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm transition duration-200 hover:border-primary/40 ${
+                            signupRole === "seeker"
+                              ? "border-primary bg-primary/8 shadow-sm"
+                              : "border-border/80"
+                          }`}
+                        >
+                          <RadioGroupItem id="role-seeker" value="seeker" />
+                          {t("auth.role.seeker")}
+                        </Label>
+                        <Label
+                          htmlFor="role-ngo"
+                          className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm transition duration-200 hover:border-primary/40 ${
+                            signupRole === "ngo"
+                              ? "border-primary bg-primary/8 shadow-sm"
+                              : "border-border/80"
+                          }`}
+                        >
+                          <RadioGroupItem id="role-ngo" value="ngo" />
+                          {t("auth.role.ngo")}
+                        </Label>
+                      </RadioGroup>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="su-name">
+                        {signupRole === "ngo" ? t("auth.orgName") : t("auth.fullName")}
                       </Label>
-                      <Label
-                        htmlFor="role-ngo"
-                        className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm transition duration-200 hover:border-primary/40 ${
-                          signupRole === "ngo"
-                            ? "border-primary bg-primary/8 shadow-sm"
-                            : "border-border/80"
-                        }`}
-                      >
-                        <RadioGroupItem id="role-ngo" value="ngo" />
-                        {t("auth.role.ngo")}
-                      </Label>
-                    </RadioGroup>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="su-name">
-                      {signupRole === "ngo" ? t("auth.orgName") : t("auth.fullName")}
-                    </Label>
-                    <Input
-                      id="su-name"
-                      name="fullName"
-                      required
-                      maxLength={120}
-                      className="h-11 rounded-xl"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="su-email">{t("common.email")}</Label>
-                    <Input
-                      id="su-email"
-                      name="email"
-                      type="email"
-                      required
-                      className="h-11 rounded-xl"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="su-pw">{t("common.password")}</Label>
-                    <Input
-                      id="su-pw"
-                      name="password"
-                      type="password"
-                      required
-                      minLength={6}
-                      className="h-11 rounded-xl"
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="h-11 w-full rounded-full shadow-md shadow-primary/20"
-                    disabled={busy}
-                  >
-                    {busy ? t("auth.creating") : t("auth.create")}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
+                      <Input
+                        id="su-name"
+                        name="fullName"
+                        required
+                        maxLength={120}
+                        className="h-11 rounded-xl"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="su-email">{t("common.email")}</Label>
+                      <Input
+                        id="su-email"
+                        name="email"
+                        type="email"
+                        required
+                        className="h-11 rounded-xl"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="su-pw">{t("common.password")}</Label>
+                      <Input
+                        id="su-pw"
+                        name="password"
+                        type="password"
+                        required
+                        minLength={6}
+                        className="h-11 rounded-xl"
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      className="h-11 w-full rounded-full shadow-md shadow-primary/20"
+                      disabled={busy}
+                    >
+                      {busy ? t("auth.creating") : t("auth.create")}
+                    </Button>
+                  </form>
+                </TabsContent>
+              </Tabs>
+            ) : (
+              <AuthFormSkeleton />
+            )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Stable, input-free placeholder rendered during SSR + first client render.
+// Keeps the auth card the same height as the real form so there is no layout
+// shift when `mounted` flips and the actual <Tabs> mount client-side.
+function AuthFormSkeleton() {
+  return (
+    <div className="mt-8 space-y-4" aria-hidden>
+      <Skeleton className="h-11 w-full rounded-full" />
+      <div className="mt-6 space-y-4">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-11 w-full rounded-xl" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-11 w-full rounded-xl" />
+        </div>
+        <Skeleton className="h-11 w-full rounded-full" />
       </div>
     </div>
   );

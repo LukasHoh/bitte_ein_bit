@@ -53,8 +53,14 @@ class SkillBasedMatcher:
         self._skill_related: Dict[str, set[str]] = {}
         self._skill_broader: Dict[str, set[str]] = {}
         self._skill_narrower: Dict[str, set[str]] = {}
+        self._skill_labels: Dict[str, str] = {}
 
         self._load_indices()
+
+    @property
+    def skill_labels(self) -> Dict[str, str]:
+        """Read-only view of ESCO skill URI -> preferred English label."""
+        return self._skill_labels
 
     def _load_indices(self) -> None:
         con = duckdb.connect(self.db_path, read_only=True)
@@ -66,6 +72,15 @@ class SkillBasedMatcher:
                 """
             ).fetchall()
             self._occupation_labels = {r[0]: (r[1] or "") for r in occ_rows}
+
+            skill_rows = con.execute(
+                """
+                SELECT conceptUri AS skill_uri, preferredLabel AS skill_label
+                FROM skills_en
+                WHERE conceptUri IS NOT NULL
+                """
+            ).fetchall()
+            self._skill_labels = {r[0]: (r[1] or "") for r in skill_rows}
 
             req_rows = con.execute(
                 """
@@ -154,9 +169,16 @@ class SkillBasedMatcher:
         include_hierarchy: bool = True,
         hierarchy_decay: float = 0.6,
         related_decay: float = 0.5,
+        essential_floor: float | None = None,
     ) -> List[MatchResult]:
         if not skill_profile:
             return []
+
+        # Per-call override wins over the matcher-wide default. We clamp to keep
+        # callers honest (e.g. negative or >1 floors are treated as 0/1).
+        active_floor = self._clamp_01(
+            self.essential_floor if essential_floor is None else essential_floor
+        )
 
         expanded = self._expand_profile(
             skill_profile=skill_profile,
@@ -192,13 +214,18 @@ class SkillBasedMatcher:
                 sum(optional_hits) / optional_total if optional_total > 0 else 0.0
             )
 
-            if essential_total > 0 and essential_coverage < self.essential_floor:
+            if essential_total > 0 and essential_coverage < active_floor:
                 continue
 
             base_score = (
                 self.essential_weight * essential_coverage
                 + self.optional_weight * optional_coverage
             )
+
+            # When the floor is relaxed (e.g. 0.0), still skip occupations with
+            # absolutely no overlap so the result list isn't padded with noise.
+            if base_score <= 0.0:
+                continue
 
             matched_input_skills = sorted(
                 (essential_skills | optional_skills) & input_skill_uris
