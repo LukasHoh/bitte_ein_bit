@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AmbientBackground } from "@/components/ambient-background";
-import { LayoutDashboard, User, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, User, Briefcase, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type AppNavPillTab = { to: string; label: string; icon: LucideIcon };
@@ -67,6 +67,7 @@ function AppLayout() {
   }
 
   const homeTab = { to: "/app" as const, label: t("nav.dashboard"), icon: LayoutDashboard };
+  const matchingTab = { to: "/app/matching" as const, label: t("nav.matching"), icon: Briefcase };
   const profileTab = { to: "/app/profile" as const, label: t("nav.profile"), icon: User };
 
   return (
@@ -103,6 +104,7 @@ function AppLayout() {
         <nav className="container mx-auto flex items-center justify-between gap-2 px-4 pb-3 sm:px-6 sm:pb-3.5">
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <AppNavPill path={path} tab={homeTab} />
+            <AppNavPill path={path} tab={matchingTab} />
           </div>
           <AppNavPill path={path} tab={profileTab} className="shrink-0" />
         </nav>
