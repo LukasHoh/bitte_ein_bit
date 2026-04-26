@@ -86,6 +86,43 @@ def get_skill_by_id(skill_id: str) -> str:
         logging.exception("Failed to fetch skill by id: %s", normalized_skill_id)
         return f"Failed to fetch skill '{normalized_skill_id}': {exc}"
 
+
+def get_skill_document_by_id(skill_id: str) -> dict[str, Any] | None:
+    """Get full Pinecone skill document by vector skill_id."""
+    normalized_skill_id = skill_id.strip()
+    if not normalized_skill_id:
+        return None
+
+    index = getattr(skills_vector_store, "index", None) or getattr(skills_vector_store, "_index", None)
+    if index is None:
+        return None
+
+    fetch_response = index.fetch(
+        ids=[normalized_skill_id],
+        namespace=DEFAULT_PINECONE_NAMESPACE,
+    )
+    vectors = (
+        fetch_response.get("vectors", {})
+        if isinstance(fetch_response, dict)
+        else getattr(fetch_response, "vectors", {}) or {}
+    )
+    if not isinstance(vectors, dict):
+        return None
+
+    vector_data = vectors.get(normalized_skill_id)
+    if not vector_data:
+        return None
+
+    metadata = (
+        vector_data.get("metadata", {})
+        if isinstance(vector_data, dict)
+        else getattr(vector_data, "metadata", {}) or {}
+    )
+    return {
+        "skill_id": normalized_skill_id,
+        "metadata": metadata if isinstance(metadata, dict) else {},
+    }
+
 def get_similar_skills(query: str, k: int):
     results = skills_vector_store.similarity_search(query, k=10)
     return results

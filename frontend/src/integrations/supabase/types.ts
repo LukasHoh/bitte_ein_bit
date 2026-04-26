@@ -440,30 +440,45 @@ export type Database = {
       }
       profiles: {
         Row: {
+          age: number | null
           bio: string | null
+          country: string | null
           created_at: string
           full_name: string | null
           id: string
           language: string | null
+          region: string | null
           region_id: string | null
+          salary_importance: number | null
+          sex: string | null
           updated_at: string
         }
         Insert: {
+          age?: number | null
           bio?: string | null
+          country?: string | null
           created_at?: string
           full_name?: string | null
           id: string
           language?: string | null
+          region?: string | null
           region_id?: string | null
+          salary_importance?: number | null
+          sex?: string | null
           updated_at?: string
         }
         Update: {
+          age?: number | null
           bio?: string | null
+          country?: string | null
           created_at?: string
           full_name?: string | null
           id?: string
           language?: string | null
+          region?: string | null
           region_id?: string | null
+          salary_importance?: number | null
+          sex?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -612,25 +627,31 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          llm_level: string | null
           proficiency: Database["public"]["Enums"]["proficiency"] | null
           skill_id: string
           source: Database["public"]["Enums"]["skill_source"] | null
+          user_quote: string | null
           user_id: string
         }
         Insert: {
           created_at?: string
           id?: string
+          llm_level?: string | null
           proficiency?: Database["public"]["Enums"]["proficiency"] | null
           skill_id: string
           source?: Database["public"]["Enums"]["skill_source"] | null
+          user_quote?: string | null
           user_id: string
         }
         Update: {
           created_at?: string
           id?: string
+          llm_level?: string | null
           proficiency?: Database["public"]["Enums"]["proficiency"] | null
           skill_id?: string
           source?: Database["public"]["Enums"]["skill_source"] | null
+          user_quote?: string | null
           user_id?: string
         }
         Relationships: [
