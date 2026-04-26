@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { execute, queryOne } from "@/integrations/db/client.server";
+import { requireAuth } from "@/integrations/db/session.server";
 
 const InputSchema = z.object({
   conversationId: z.string().uuid().nullable(),
@@ -101,7 +102,10 @@ function extractAssistantReply(payload: unknown): string {
 
 function toSerializableMetadata(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object") return {};
-  const entries = Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")]);
+  const entries = Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+    k,
+    String(v ?? ""),
+  ]);
   return Object.fromEntries(entries);
 }
 
@@ -157,8 +161,7 @@ function extractSelectedSkills(payload: unknown): SelectedSkill[] {
                       typeof skill.level === "string" && skill.level.trim()
                         ? skill.level.trim()
                         : "medium",
-                    user_quote:
-                      typeof skill.user_quote === "string" ? skill.user_quote.trim() : "",
+                    user_quote: typeof skill.user_quote === "string" ? skill.user_quote.trim() : "",
                   });
                 }
               }
@@ -365,39 +368,67 @@ async function* readSseJsonData(
   }
 }
 
+/**
+ * Looks up the caller's preferred language and ensures a `chat_conversations`
+ * row exists for the given `conversationId`. Returns the resolved language +
+ * conversation id.
+ */
+async function ensureConversation(
+  userId: string,
+  conversationId: string | null,
+): Promise<{ convId: string; languageCode: string | null }> {
+  const profile = await queryOne<{ language: string | null }>(
+    "SELECT language FROM profiles WHERE id = $id",
+    { id: userId },
+  );
+  const languageCode = profile?.language ?? null;
+
+  let convId = conversationId;
+  if (!convId) {
+    convId = crypto.randomUUID();
+    await execute(
+      "INSERT INTO chat_conversations (id, user_id, title) VALUES ($id, $user_id, $title)",
+      { id: convId, user_id: userId, title: "Chat" },
+    );
+  } else {
+    const existing = await queryOne<{ user_id: string }>(
+      "SELECT user_id FROM chat_conversations WHERE id = $id",
+      { id: convId },
+    );
+    if (!existing) {
+      await execute(
+        "INSERT INTO chat_conversations (id, user_id, title) VALUES ($id, $user_id, $title)",
+        { id: convId, user_id: userId, title: "Chat" },
+      );
+    } else if (existing.user_id !== userId) {
+      throw new Response("Forbidden", { status: 403 });
+    }
+  }
+
+  return { convId, languageCode };
+}
+
+async function appendChatMessage(
+  conversationId: string,
+  role: "user" | "assistant",
+  content: string,
+): Promise<void> {
+  await execute(
+    `INSERT INTO chat_messages (id, conversation_id, role, content)
+     VALUES ($id, $conv, $role, $content)`,
+    { id: crypto.randomUUID(), conv: conversationId, role, content },
+  );
+}
+
 export const sendSkillsChat = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context as { supabase: any; userId: string };
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("language")
-      .eq("id", userId)
-      .maybeSingle();
-    const languageCode = (profile?.language as string | null | undefined) ?? null;
+    const { userId } = context;
+    const { convId, languageCode } = await ensureConversation(userId, data.conversationId);
     const assistantId = resolveAssistantId(languageCode);
 
-    // ensure conversation
-    let convId = data.conversationId;
-    if (!convId) {
-      const { data: conv, error } = await supabase
-        .from("chat_conversations")
-        .insert({ user_id: userId, title: "Chat" })
-        .select("id")
-        .single();
-      if (error) throw new Error(error.message);
-      convId = conv.id;
-    }
-    if (!convId) {
-      throw new Error("Failed to create conversation.");
-    }
-
-    // store user msg
-    await supabase
-      .from("chat_messages")
-      .insert({ conversation_id: convId, role: "user", content: data.message });
-
+    await appendChatMessage(convId, "user", data.message);
     await ensureLangGraphThread(convId, userId);
 
     const runRes = await fetch(`${LANGGRAPH_BASE_URL}/threads/${convId}/runs/wait`, {
@@ -423,15 +454,11 @@ export const sendSkillsChat = createServerFn({ method: "POST" })
     const visibleReply = extractAssistantReply(runOutput) || "I could not generate a reply.";
     const selectedSkills = extractSelectedSkills(runOutput);
 
-    // Persist assistant message (visible part only)
-    await supabase
-      .from("chat_messages")
-      .insert({ conversation_id: convId, role: "assistant", content: visibleReply });
+    await appendChatMessage(convId, "assistant", visibleReply);
 
     return {
       conversationId: convId,
       reply: visibleReply,
-      // surfaced to frontend so selected skills can be shown immediately
       newSkills: selectedSkills.map((s) => s.skill_id),
       selectedSkills,
       error: null as string | null,
@@ -443,36 +470,14 @@ export const sendSkillsChat = createServerFn({ method: "POST" })
  * Falls back to /runs/wait when /runs/stream is unavailable.
  */
 export const streamSkillsChat = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context as { supabase: any; userId: string };
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("language")
-      .eq("id", userId)
-      .maybeSingle();
-    const languageCode = (profile?.language as string | null | undefined) ?? null;
+    const { userId } = context;
+    const { convId, languageCode } = await ensureConversation(userId, data.conversationId);
     const assistantId = resolveAssistantId(languageCode);
 
-    let convId = data.conversationId;
-    if (!convId) {
-      const { data: conv, error } = await supabase
-        .from("chat_conversations")
-        .insert({ user_id: userId, title: "Chat" })
-        .select("id")
-        .single();
-      if (error) throw new Error(error.message);
-      convId = conv.id;
-    }
-    if (!convId) {
-      throw new Error("Failed to create conversation.");
-    }
-
-    await supabase
-      .from("chat_messages")
-      .insert({ conversation_id: convId, role: "user", content: data.message });
-
+    await appendChatMessage(convId, "user", data.message);
     await ensureLangGraphThread(convId, userId);
 
     const runBody = buildRunJsonBody(assistantId, languageCode, userId, data.message);
@@ -517,9 +522,7 @@ export const streamSkillsChat = createServerFn({ method: "POST" })
       const runOutput = await waitRes.json();
       const visibleReply = extractAssistantReply(runOutput) || "I could not generate a reply.";
       const selectedSkills = extractSelectedSkills(runOutput);
-      await supabase
-        .from("chat_messages")
-        .insert({ conversation_id: convId, role: "assistant", content: visibleReply });
+      await appendChatMessage(convId, "assistant", visibleReply);
 
       const out =
         JSON.stringify({ type: "text", text: visibleReply }) +
@@ -586,11 +589,7 @@ export const streamSkillsChat = createServerFn({ method: "POST" })
               extractAssistantReply(lastChunk ?? {}) || lastText || "I could not generate a reply.";
             const selectedSkills = extractSelectedSkills(lastChunk ?? {});
 
-            await supabase.from("chat_messages").insert({
-              conversation_id: convId,
-              role: "assistant",
-              content: finalReply,
-            });
+            await appendChatMessage(convId, "assistant", finalReply);
 
             controller.enqueue(
               enc.encode(
@@ -635,7 +634,7 @@ export const streamSkillsChat = createServerFn({ method: "POST" })
   });
 
 export const searchManualSkills = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((input: unknown) => ManualSkillSearchInputSchema.parse(input))
   .handler(async ({ data }) => {
     const response = await fetch(`${LANGGRAPH_BASE_URL}/skills/manual-search`, {

@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
+import { countUserSkills } from "@/server/skills.functions";
+import { getProfile } from "@/server/profile.functions";
 import { Button } from "@/components/ui/button";
 import { Sparkles } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,15 +22,9 @@ function SkillsHomePage() {
 
   const loadDashboardStats = useCallback(async () => {
     if (!user) return;
-    const [{ count: s }, { data: prof }] = await Promise.all([
-      supabase
-        .from("user_skills")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", user.id),
-      supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
-    ]);
-    setSkillsCount(s ?? 0);
-    setName(prof?.full_name ?? "");
+    const [count, profile] = await Promise.all([countUserSkills(), getProfile()]);
+    setSkillsCount(count);
+    setName(profile.full_name ?? "");
   }, [user]);
 
   useEffect(() => {

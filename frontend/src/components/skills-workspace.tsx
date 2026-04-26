@@ -2,7 +2,13 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
+import { getProfile } from "@/server/profile.functions";
+import {
+  deleteUserSkill,
+  listUserSkills,
+  persistUserSkill,
+  updateUserSkillLevel,
+} from "@/server/skills.functions";
 import { searchManualSkills, streamSkillsChat } from "@/server/skills-chat.functions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,8 +26,7 @@ import { ChatMarkdown } from "@/components/chat-markdown";
 import { cn } from "@/lib/utils";
 
 /** Matches chat + skills column height (large screens). */
-const SKILLS_STACK_HEIGHT =
-  "h-[min(76dvh,80svh)] min-h-[28rem] max-h-[min(92dvh,56rem)]";
+const SKILLS_STACK_HEIGHT = "h-[min(76dvh,80svh)] min-h-[28rem] max-h-[min(92dvh,56rem)]";
 
 const SKILLS_STATUS_KEYS = [
   "skills.status.1",
@@ -29,7 +34,6 @@ const SKILLS_STATUS_KEYS = [
   "skills.status.3",
   "skills.status.4",
 ] as const;
-
 
 type Msg = { role: "user" | "assistant"; content: string };
 type SelectedSkill = {
@@ -87,7 +91,7 @@ export function SkillsWorkspace({
   showBackLink = true,
 }: SkillsWorkspaceProps) {
   const { t } = useI18n();
-  const { user, session } = useAuth();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -126,71 +130,42 @@ export function SkillsWorkspace({
 
   const loadAcceptedSkills = async () => {
     if (!user) return;
-    const response = await supabase
-      .from("user_skills")
-      .select("id, proficiency, llm_level, user_quote, skills(name)")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    let data = response.data;
-    let error = response.error;
-
-    // Backward-compatible fallback until llm_level/user_quote columns exist in DB.
-    if (error && String(error.message).includes("does not exist")) {
-      const fallback = await supabase
-        .from("user_skills")
-        .select("id, proficiency, skills(name)")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-      data = fallback.data as typeof data;
-      error = fallback.error;
+    try {
+      const rows = await listUserSkills();
+      const cache = descriptionCacheRef.current;
+      setAcceptedSkills(
+        rows.map((row) => ({
+          id: row.id,
+          name: row.name ?? t("skills.unknown"),
+          proficiency: row.proficiency ?? null,
+          llm_level: row.llm_level ?? null,
+          user_quote: row.user_quote ?? null,
+          description: cache.get(row.name) ?? null,
+        })),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load skills");
     }
-
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    const cache = descriptionCacheRef.current;
-    setAcceptedSkills(
-      (data ?? []).map(
-        (row: {
-          id: string;
-          proficiency: string | null;
-          llm_level: string | null;
-          user_quote: string | null;
-          skills: { name: string } | null;
-        }) => {
-          const name = row.skills?.name ?? t("skills.unknown");
-          return {
-            id: row.id,
-            name,
-            proficiency: row.proficiency ?? null,
-            llm_level: row.llm_level ?? null,
-            user_quote: row.user_quote ?? null,
-            description: cache.get(name) ?? null,
-          };
-        },
-      ),
-    );
   };
 
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("language")
-        .eq("id", user.id)
-        .maybeSingle();
-      const resolvedLanguage = String(profile?.language ?? "en").toLowerCase();
-      setProfileLanguage(resolvedLanguage);
-
-      // Start a fresh language-aligned session to avoid old-thread language carryover.
-      setConvId(null);
-      const starter =
-        STARTER_MESSAGES[resolvedLanguage] ||
-        STARTER_MESSAGES[resolvedLanguage.split("-")[0]] ||
-        STARTER_MESSAGES.en;
-      setMessages([{ role: "assistant", content: starter }]);
+      try {
+        const profile = await getProfile();
+        const resolvedLanguage = String(profile.language ?? "en").toLowerCase();
+        setProfileLanguage(resolvedLanguage);
+        setConvId(null);
+        const starter =
+          STARTER_MESSAGES[resolvedLanguage] ||
+          STARTER_MESSAGES[resolvedLanguage.split("-")[0]] ||
+          STARTER_MESSAGES.en;
+        setMessages([{ role: "assistant", content: starter }]);
+      } catch {
+        // ignore — fall back to English starter
+        setProfileLanguage("en");
+        setMessages([{ role: "assistant", content: STARTER_MESSAGES.en }]);
+      }
       loadAcceptedSkills();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -231,8 +206,7 @@ export function SkillsWorkspace({
     if (typeof row.conversationId === "string") setConvId(row.conversationId);
     if (row.error === "credits")
       toast.error("AI credits exhausted — add credits in Lovable Cloud.");
-    else if (row.error === "rate_limit")
-      toast.warning("Rate limited — try again shortly.");
+    else if (row.error === "rate_limit") toast.warning("Rate limited — try again shortly.");
     else if (row.error === "chat_backend_error") toast.error("Chat backend error.");
     else if (row.error === "stream_error") {
       if (!row.reply) toast.error("The reply could not be streamed.");
@@ -264,7 +238,7 @@ export function SkillsWorkspace({
   };
 
   const send = async () => {
-    if (!input.trim() || busy || !session) return;
+    if (!input.trim() || busy || !user) return;
     const text = input.trim().slice(0, 2000);
     setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setInput("");
@@ -272,8 +246,7 @@ export function SkillsWorkspace({
     try {
       const res = await streamSkillsChat({
         data: { conversationId: convId, message: text },
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+      });
 
       if (!(res instanceof Response) || !res.body) {
         toast.error("Invalid response from chat.");
@@ -369,13 +342,12 @@ export function SkillsWorkspace({
   };
 
   const runManualSearch = async () => {
-    if (!session || !manualQuery.trim() || manualBusy) return;
+    if (!user || !manualQuery.trim() || manualBusy) return;
     setManualBusy(true);
     try {
       const result = await searchManualSkills({
         data: { query: manualQuery.trim(), limit: 5 },
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+      });
       setManualResults((result.candidates ?? []) as ManualSkillCandidate[]);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Manual search failed");
@@ -384,7 +356,7 @@ export function SkillsWorkspace({
     }
   };
 
-  const persistUserSkill = async (
+  const saveUserSkill = async (
     skill: SelectedSkill,
     options: { source: "chat" | "manual"; onLinked?: (hadExisting: boolean) => void },
   ) => {
@@ -395,92 +367,25 @@ export function SkillsWorkspace({
     if (actionBusy) return;
     setActionBusy(true);
     setActiveSkillId(skill.skill_id);
-    let hadExistingLink = false;
     try {
       const normalizedName = (skill.skill_label || "").trim();
       if (!normalizedName) throw new Error("Missing skill name.");
       const formattedName = formatSkillName(normalizedName);
 
-      let dbSkillId: string | null = null;
-      const { data: existingSkill, error: findSkillError } = await supabase
-        .from("skills")
-        .select("id")
-        .eq("name", normalizedName)
-        .limit(1)
-        .maybeSingle();
-      if (findSkillError) throw findSkillError;
-      dbSkillId = existingSkill?.id ?? null;
-
-      if (!dbSkillId) {
-        const { data: createdSkill, error: createSkillError } = await supabase
-          .from("skills")
-          .insert({ name: formattedName, category: "chat" })
-          .select("id")
-          .single();
-        if (createSkillError) throw createSkillError;
-        dbSkillId = createdSkill.id;
-      }
-      if (!dbSkillId) throw new Error("Could not resolve saved skill id.");
-
-      const { data: existingLink, error: findLinkError } = await supabase
-        .from("user_skills")
-        .select("id")
-        .eq("user_id", user.id)
-        .eq("skill_id", dbSkillId)
-        .limit(1)
-        .maybeSingle();
-      if (findLinkError) throw findLinkError;
-
-      if (existingLink) {
-        hadExistingLink = true;
-        const updatePayload = {
+      const result = await persistUserSkill({
+        data: {
+          name: formattedName,
           proficiency: toProficiency(skill.level),
-          llm_level: skill.level,
-        };
-        let { error: upError } = await supabase
-          .from("user_skills")
-          .update(updatePayload)
-          .eq("id", existingLink.id);
-        if (
-          upError &&
-          (String(upError.message).includes("schema cache") ||
-            String(upError.message).includes("does not exist"))
-        ) {
-          const retry = await supabase
-            .from("user_skills")
-            .update({ proficiency: toProficiency(skill.level) })
-            .eq("id", existingLink.id);
-          upError = retry.error;
-        }
-        if (upError) throw upError;
-      } else {
-        const baseInsertPayload = {
-          user_id: user.id,
-          skill_id: dbSkillId,
-          source: options.source,
-          proficiency: toProficiency(skill.level),
-        };
-        const extendedInsertPayload = {
-          ...baseInsertPayload,
           llm_level: skill.level,
           user_quote: skill.user_quote || null,
-        };
+          source: options.source,
+        },
+      });
 
-        let { error: createLinkError } = await supabase
-          .from("user_skills")
-          .insert(extendedInsertPayload);
-
-        if (createLinkError && String(createLinkError.message).includes("schema cache")) {
-          const retry = await supabase.from("user_skills").insert(baseInsertPayload);
-          createLinkError = retry.error;
-        }
-
-        if (createLinkError) throw createLinkError;
-      }
-
+      const hadExistingLink = !result.created;
       options.onLinked?.(hadExistingLink);
       const desc = skill.description || skill.summary || null;
-      if (desc) descriptionCacheRef.current.set(formatSkillName(normalizedName), desc);
+      if (desc) descriptionCacheRef.current.set(formattedName, desc);
       await loadAcceptedSkills();
       onUserSkillsMutated?.();
       if (options.source === "manual") {
@@ -501,7 +406,7 @@ export function SkillsWorkspace({
   };
 
   const acceptSkill = async (skill: SelectedSkill) => {
-    await persistUserSkill(skill, {
+    await saveUserSkill(skill, {
       source: "chat",
       onLinked: () => removeSuggestion(skill),
     });
@@ -524,27 +429,20 @@ export function SkillsWorkspace({
       level,
       user_quote: "",
     };
-    await persistUserSkill(selected, { source: "manual" });
+    await saveUserSkill(selected, { source: "manual" });
   };
 
   const updateAcceptedSkillLevel = async (userSkillId: string, newLevel: string) => {
     if (!user) return;
     setLevelUpdateBusyId(userSkillId);
     try {
-      const ext = { proficiency: toProficiency(newLevel), llm_level: newLevel };
-      let { error } = await supabase.from("user_skills").update(ext).eq("id", userSkillId);
-      if (
-        error &&
-        (String(error.message).includes("schema cache") ||
-          String(error.message).includes("does not exist"))
-      ) {
-        const r = await supabase
-          .from("user_skills")
-          .update({ proficiency: toProficiency(newLevel) })
-          .eq("id", userSkillId);
-        error = r.error;
-      }
-      if (error) throw error;
+      await updateUserSkillLevel({
+        data: {
+          user_skill_id: userSkillId,
+          proficiency: toProficiency(newLevel),
+          llm_level: newLevel,
+        },
+      });
       await loadAcceptedSkills();
       toast.success(t("skills.levelUpdated"));
     } catch (e: unknown) {
@@ -558,8 +456,7 @@ export function SkillsWorkspace({
     if (deleteBusyId) return;
     setDeleteBusyId(userSkillId);
     try {
-      const { error } = await supabase.from("user_skills").delete().eq("id", userSkillId);
-      if (error) throw error;
+      await deleteUserSkill({ data: { user_skill_id: userSkillId } });
       await loadAcceptedSkills();
       onUserSkillsMutated?.();
       toast.success(t("dash.removed"));
@@ -623,8 +520,7 @@ export function SkillsWorkspace({
             const isLast = i === messages.length - 1;
             const showStreamCursor =
               m.role === "assistant" && busy && isLast && m.content.length > 0;
-            const showStatusLine =
-              m.role === "assistant" && !m.content && busy && isLast;
+            const showStatusLine = m.role === "assistant" && !m.content && busy && isLast;
             return (
               <div
                 key={i}
@@ -641,7 +537,10 @@ export function SkillsWorkspace({
                   )}
                 >
                   {showStatusLine ? (
-                    <p className="text-muted-foreground transition-[opacity] duration-300" aria-live="polite">
+                    <p
+                      className="text-muted-foreground transition-[opacity] duration-300"
+                      aria-live="polite"
+                    >
                       {t(SKILLS_STATUS_KEYS[streamStatusIdx] ?? "skills.status.1")}
                     </p>
                   ) : (
@@ -728,11 +627,8 @@ export function SkillsWorkspace({
         <div className="px-4 pb-3 text-right text-xs text-muted-foreground">{t("skills.hint")}</div>
       </section>
 
-      <aside
-        className={cn("flex min-h-0 min-w-0 flex-col gap-3", SKILLS_STACK_HEIGHT)}
-      >
+      <aside className={cn("flex min-h-0 min-w-0 flex-col gap-3", SKILLS_STACK_HEIGHT)}>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain rounded-3xl border border-border/60 bg-card/90 shadow-lg shadow-primary/5 backdrop-blur-sm [scrollbar-gutter:stable]">
-
           {/* ── Manually add skills (always open) ── */}
           <section className="border-b border-border/50 px-5 py-4 sm:px-6">
             <h3 className="mb-3 text-sm font-semibold">{t("skills.manual.title")}</h3>
@@ -830,10 +726,15 @@ export function SkillsWorkspace({
             >
               <span className="text-sm font-semibold">
                 {t("skills.panel.pending")}
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">({selectedByLlm.length})</span>
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  ({selectedByLlm.length})
+                </span>
               </span>
               <ChevronDown
-                className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200", pendingOpen && "rotate-180")}
+                className={cn(
+                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                  pendingOpen && "rotate-180",
+                )}
                 aria-hidden
               />
             </button>
@@ -846,7 +747,10 @@ export function SkillsWorkspace({
                 ) : (
                   <ul className="space-y-2">
                     {selectedByLlm.map((skillId) => (
-                      <li key={skillId.skill_id} className="rounded-xl border bg-background px-4 py-4">
+                      <li
+                        key={skillId.skill_id}
+                        className="rounded-xl border bg-background px-4 py-4"
+                      >
                         <div className="space-y-1">
                           <p className="text-sm font-semibold leading-snug text-foreground break-words [overflow-wrap:anywhere]">
                             {formatSkillName(skillId.skill_label || skillId.skill_id)}
@@ -909,10 +813,15 @@ export function SkillsWorkspace({
             >
               <span className="text-sm font-semibold">
                 {t("skills.panel.title")}
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">({acceptedSkills.length})</span>
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  ({acceptedSkills.length})
+                </span>
               </span>
               <ChevronDown
-                className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200", yourSkillsOpen && "rotate-180")}
+                className={cn(
+                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                  yourSkillsOpen && "rotate-180",
+                )}
                 aria-hidden
               />
             </button>
@@ -941,7 +850,9 @@ export function SkillsWorkspace({
                               size="sm"
                               variant="outline"
                               onClick={() => void deleteAcceptedSkill(skill.id)}
-                              disabled={!!deleteBusyId || levelUpdateBusyId === skill.id || actionBusy}
+                              disabled={
+                                !!deleteBusyId || levelUpdateBusyId === skill.id || actionBusy
+                              }
                               className="mt-0.5 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
                             >
                               {deleteBusyId === skill.id ? (

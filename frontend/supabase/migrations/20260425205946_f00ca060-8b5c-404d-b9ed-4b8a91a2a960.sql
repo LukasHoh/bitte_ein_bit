@@ -1,1 +1,0 @@
-ALTER VIEW public.trainings SET (security_invoker = on);

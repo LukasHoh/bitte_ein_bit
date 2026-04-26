@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
-from backend_matching.api.schemas import MatchingRunRequest
-from backend_matching.matching import MatchRequest, MatchingAlgorithm
+from matching_service.api.schemas import MatchingRunRequest
+from matching_service.matching import MatchRequest, MatchingAlgorithm
 
 
 @asynccontextmanager

@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth, type AppRole } from "@/lib/auth";
-import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,24 +49,16 @@ function AuthPage() {
       String(fd.get("email")),
       String(fd.get("password")),
       String(fd.get("fullName")),
+      signupRole,
     );
 
+    setBusy(false);
+
     if (error) {
-      setBusy(false);
       toast.error(error);
       return;
     }
 
-    // If the user picked NGO, add the ngo role (default trigger gives 'seeker')
-    if (signupRole === "ngo") {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData.session?.user.id;
-      if (uid) {
-        await supabase.from("user_roles").insert({ user_id: uid, role: "ngo" });
-      }
-    }
-
-    setBusy(false);
     toast.success("Account created — you're signed in.");
     navigate({ to: signupRole === "ngo" ? "/ngo" : "/app" });
   };

@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { query } from "@/integrations/db/client.server";
+import { requireAuth } from "@/integrations/db/session.server";
 
 const MATCHING_BACKEND_URL =
   process.env.MATCHING_BACKEND_URL ||
@@ -8,9 +9,7 @@ const MATCHING_BACKEND_URL =
   "http://localhost:8000";
 
 const SKILL_BACKEND_URL =
-  process.env.SKILL_BACKEND_URL ||
-  process.env.VITE_SKILL_BACKEND_URL ||
-  "http://localhost:2024";
+  process.env.SKILL_BACKEND_URL || process.env.VITE_SKILL_BACKEND_URL || "http://localhost:2024";
 
 const MatchingRunInputSchema = z.object({
   country: z.string().min(2).max(3),
@@ -53,7 +52,7 @@ export type MatchingRunResult = {
     top_k: number;
   };
   occupations: OccupationResult[];
-  /** Skills from user profile (Supabase). */
+  /** Skills from the user's profile (DuckDB user_skills). */
   profile_skill_count: number;
   /** Skills successfully mapped to an ESCO concept URI. */
   skill_count: number;
@@ -85,24 +84,26 @@ async function resolveConceptUri(skillName: string): Promise<string | null> {
 }
 
 export const runMatching = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireAuth])
   .inputValidator((input: unknown) => MatchingRunInputSchema.parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { userId } = context;
 
-    const { data: userSkillRows } = await supabase
-      .from("user_skills")
-      .select("proficiency, llm_level, skills(name)")
-      .eq("user_id", userId);
-
-    type SkillRow = { proficiency: string | null; llm_level: string | null; skills: { name: string } | null };
-    const rows: SkillRow[] = Array.isArray(userSkillRows) ? userSkillRows : [];
+    const rows = await query<{
+      proficiency: string | null;
+      llm_level: string | null;
+      name: string;
+    }>(
+      `SELECT us.proficiency, us.llm_level, s.name
+       FROM user_skills us JOIN skills s ON s.id = us.skill_id
+       WHERE us.user_id = $user_id`,
+      { user_id: userId },
+    );
 
     const resolvedSkills = await Promise.all(
       rows.map(async (row) => {
-        const name = row.skills?.name;
-        if (!name) return null;
-        const uri = await resolveConceptUri(name);
+        if (!row.name) return null;
+        const uri = await resolveConceptUri(row.name);
         if (!uri) return null;
         const levelKey = (row.llm_level || row.proficiency || "intermediate").toLowerCase();
         const score = proficiencyToScore[levelKey] ?? 0.5;

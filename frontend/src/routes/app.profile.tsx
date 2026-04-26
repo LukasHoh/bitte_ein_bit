@@ -2,26 +2,23 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
+import { getProfile, listRegions, upsertProfile } from "@/server/profile.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { User } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/app/profile")({
   component: ProfilePage,
 });
-
-type ProfileRow = {
-  full_name: string | null;
-  language: string | null;
-  region_id?: string | null;
-  sex?: string | null;
-  salary_importance?: number | null;
-  age?: number | null;
-};
 
 function ProfilePage() {
   const { t } = useI18n();
@@ -34,55 +31,21 @@ function ProfilePage() {
   const [salaryImportance, setSalaryImportance] = useState<number>(5);
   const [age, setAge] = useState<number | "">("");
   const [saving, setSaving] = useState(false);
-  const isSchemaMismatchError = (message: string | undefined) => {
-    const normalized = String(message ?? "").toLowerCase();
-    return normalized.includes("schema cache") || normalized.includes("does not exist");
-  };
 
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const regionsResponse = await supabase
-        .from("regions")
-        .select("id, name")
-        .order("name", { ascending: true });
-      if (regionsResponse.error) {
-        toast.error(regionsResponse.error.message);
-      } else {
-        setRegions((regionsResponse.data ?? []).map((item) => ({ id: item.id, name: item.name })));
-      }
-
-      const response = await supabase
-        .from("profiles")
-        .select("full_name, language, region_id, sex, salary_importance, age")
-        .eq("id", user.id)
-        .maybeSingle();
-      let data = response.data;
-      let error = response.error;
-
-      if (error && isSchemaMismatchError(error.message)) {
-        const fallback = await supabase
-          .from("profiles")
-          .select("full_name, language")
-          .eq("id", user.id)
-          .maybeSingle();
-        data = fallback.data as typeof data;
-        error = fallback.error;
-      }
-
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-
-      if (data) {
-        const p = data as ProfileRow;
-        setFullName(p.full_name ?? "");
-        setLanguage(p.language ?? "en");
-        setRegionId(p.region_id ?? "");
-        setSex(p.sex ?? "");
-        setSalaryImportance(p.salary_importance ?? 5);
-        setAge(p.age ?? "");
+      try {
+        const [regionRows, profile] = await Promise.all([listRegions(), getProfile()]);
+        setRegions(regionRows.map((item) => ({ id: item.id, name: item.name })));
+        setFullName(profile.full_name ?? "");
+        setLanguage(profile.language ?? "en");
+        setRegionId(profile.region_id ?? "");
+        setSex(profile.sex ?? "");
+        setSalaryImportance(profile.salary_importance ?? 5);
+        setAge(profile.age ?? "");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to load profile");
       }
     })();
   }, [user]);
@@ -90,29 +53,29 @@ function ProfilePage() {
   const save = async () => {
     if (!user) return;
     setSaving(true);
-    const fullPayload = {
-      full_name: fullName,
-      language,
-      region_id: regionId || null,
-      sex: sex || null,
-      salary_importance: salaryImportance,
-      age: age === "" ? null : age,
-    };
-    const fallbackPayload = {
-      full_name: fullName,
-      language,
-    };
-
-    let { error } = await supabase.from("profiles").update(fullPayload).eq("id", user.id);
-
-    if (error && isSchemaMismatchError(error.message)) {
-      const retry = await supabase.from("profiles").update(fallbackPayload).eq("id", user.id);
-      error = retry.error;
+    try {
+      const sexValue = sex === "" ? null : (sex as "male" | "female" | "diverse");
+      const payload = {
+        full_name: fullName,
+        language,
+        region_id: regionId || null,
+        sex: sexValue,
+        salary_importance: salaryImportance,
+        age: age === "" ? null : age,
+      };
+      const updated = await upsertProfile({ data: payload });
+      setFullName(updated.full_name ?? "");
+      setLanguage(updated.language ?? "en");
+      setRegionId(updated.region_id ?? "");
+      setSex(updated.sex ?? "");
+      setSalaryImportance(updated.salary_importance ?? 5);
+      setAge(updated.age ?? "");
+      toast.success(t("profile.saved"));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save profile.");
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
-    if (error) toast.error(error.message);
-    else toast.success(t("profile.saved"));
   };
 
   return (

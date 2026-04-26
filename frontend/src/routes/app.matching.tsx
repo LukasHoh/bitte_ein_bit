@@ -2,30 +2,21 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
+import { getProfileRegion } from "@/server/profile.functions";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Switch } from "@/components/ui/switch";
-import { Slider } from "@/components/ui/slider";
 import {
   Briefcase,
-  ChevronDown,
   TrendingUp,
   Clock,
   AlertTriangle,
   Banknote,
   BarChart2,
   RefreshCw,
-  Layers,
   Info,
-  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -34,6 +25,59 @@ import { runMatching, type OccupationResult, type MatchingRunResult } from "@/se
 export const Route = createFileRoute("/app/matching")({
   component: MatchingPage,
 });
+
+// ISO 3166-1 alpha-3 lookup by country name (matching ILOSTAT codes)
+const REGION_TO_ISO3: Record<string, string> = {
+  "Afghanistan": "AFG", "Albania": "ALB", "Angola": "AGO", "Argentina": "ARG",
+  "Armenia": "ARM", "Australia": "AUS", "Austria": "AUT", "Azerbaijan": "AZE",
+  "Bahamas": "BHS", "Bangladesh": "BGD", "Barbados": "BRB", "Belarus": "BLR",
+  "Belgium": "BEL", "Belize": "BLZ", "Benin": "BEN", "Bhutan": "BTN",
+  "Bolivia (Plurinational State of)": "BOL", "Bosnia and Herzegovina": "BIH",
+  "Botswana": "BWA", "Brazil": "BRA", "Bulgaria": "BGR", "Burkina Faso": "BFA",
+  "Burundi": "BDI", "Cabo Verde": "CPV", "Cambodia": "KHM", "Chad": "TCD",
+  "Chile": "CHL", "Colombia": "COL", "Comoros": "COM",
+  "Congo, Democratic Republic of the": "COD", "Cook Islands": "COK",
+  "Costa Rica": "CRI", "Croatia": "HRV", "Curaçao": "CUW", "Cyprus": "CYP",
+  "Czechia": "CZE", "Côte d'Ivoire": "CIV", "Denmark": "DNK", "Djibouti": "DJI",
+  "Dominican Republic": "DOM", "Ecuador": "ECU", "Egypt": "EGY",
+  "El Salvador": "SLV", "Estonia": "EST", "Eswatini": "SWZ", "Ethiopia": "ETH",
+  "Fiji": "FJI", "Finland": "FIN", "France": "FRA", "Gambia": "GMB",
+  "Georgia": "GEO", "Germany": "DEU", "Ghana": "GHA", "Gibraltar": "GIB",
+  "Greece": "GRC", "Guatemala": "GTM", "Guinea": "GIN", "Guinea-Bissau": "GNB",
+  "Guyana": "GUY", "Honduras": "HND", "Hong Kong, China": "HKG",
+  "Hungary": "HUN", "Iceland": "ISL", "India": "IND", "Indonesia": "IDN",
+  "Ireland": "IRL", "Israel": "ISR", "Italy": "ITA", "Jordan": "JOR",
+  "Kazakhstan": "KAZ", "Kenya": "KEN", "Kiribati": "KIR",
+  "Lao People's Democratic Republic": "LAO", "Latvia": "LVA", "Lebanon": "LBN",
+  "Lesotho": "LSO", "Liberia": "LBR", "Lithuania": "LTU", "Luxembourg": "LUX",
+  "Macao, China": "MAC", "Madagascar": "MDG", "Malaysia": "MYS",
+  "Maldives": "MDV", "Mali": "MLI", "Malta": "MLT", "Marshall Islands": "MHL",
+  "Mauritius": "MUS", "Mexico": "MEX", "Mongolia": "MNG", "Mozambique": "MOZ",
+  "Myanmar": "MMR", "Namibia": "NAM", "Nepal": "NPL", "Netherlands": "NLD",
+  "Niger": "NER", "Nigeria": "NGA", "Norway": "NOR", "Pakistan": "PAK",
+  "Palau": "PLW", "Palestine (State of)": "PSE", "Panama": "PAN",
+  "Paraguay": "PRY", "Peru": "PER", "Philippines": "PHL", "Poland": "POL",
+  "Portugal": "PRT", "Puerto Rico": "PRI", "Qatar": "QAT",
+  "Republic of Korea": "KOR", "Republic of Moldova": "MDA", "Romania": "ROU",
+  "Russian Federation": "RUS", "Rwanda": "RWA", "Samoa": "WSM",
+  "Sao Tome and Principe": "STP", "Saudi Arabia": "SAU", "Senegal": "SEN",
+  "Serbia": "SRB", "Seychelles": "SYC", "Sierra Leone": "SLE",
+  "Singapore": "SGP", "Slovakia": "SVK", "Slovenia": "SVN",
+  "South Africa": "ZAF", "Spain": "ESP", "Sri Lanka": "LKA", "Sudan": "SDN",
+  "Suriname": "SUR", "Sweden": "SWE", "Switzerland": "CHE",
+  "Tanzania, United Republic of": "TZA", "Thailand": "THA", "Timor-Leste": "TLS",
+  "Togo": "TGO", "Tokelau": "TKL", "Tonga": "TON", "Trinidad and Tobago": "TTO",
+  "Tunisia": "TUN", "Türkiye": "TUR", "Uganda": "UGA", "Ukraine": "UKR",
+  "United Kingdom of Great Britain and Northern Ireland": "GBR",
+  "United States of America": "USA", "Uruguay": "URY", "Uzbekistan": "UZB",
+  "Venezuela (Bolivarian Republic of)": "VEN", "Viet Nam": "VNM",
+  "Wallis and Futuna": "WLF", "Zambia": "ZMB", "Zimbabwe": "ZWE",
+};
+
+function regionNameToIso(name: string | null | undefined): string {
+  if (!name) return "";
+  return REGION_TO_ISO3[name.trim()] ?? "";
+}
 
 function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -238,25 +282,20 @@ function OccupationCard({
 type ProfileData = {
   country: string;
   sex: "" | "male" | "female" | "total";
+  referenceYear: number | null;
 };
 
 function MatchingPage() {
   const { t } = useI18n();
-  const { user, session } = useAuth();
+  const { user } = useAuth();
 
-  // Profile-derived values (auto-filled from Supabase)
+  // Profile-derived values (auto-filled from DuckDB profile + region)
   const [profileLoading, setProfileLoading] = useState(true);
-  const [profileData, setProfileData] = useState<ProfileData>({ country: "", sex: "" });
-
-  // User-adjustable overrides
-  const [country, setCountry] = useState("");
-  const [sex, setSex] = useState<"" | "male" | "female" | "total">("");
-  const [refYear, setRefYear] = useState<number | "">("");
-  const [topK, setTopK] = useState(20);
-  const [includeHierarchy, setIncludeHierarchy] = useState(true);
-  const [hierarchyDecay, setHierarchyDecay] = useState(0.6);
-  const [relatedDecay, setRelatedDecay] = useState(0.5);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [profileData, setProfileData] = useState<ProfileData>({
+    country: "",
+    sex: "",
+    referenceYear: null,
+  });
 
   const [result, setResult] = useState<MatchingRunResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -264,33 +303,24 @@ function MatchingPage() {
 
   const hasAutoRun = useRef(false);
 
-  // Load profile (country from region, sex) from Supabase
   const loadProfile = useCallback(async () => {
     if (!user) return;
     setProfileLoading(true);
     try {
-      const { data } = await supabase
-        .from("profiles")
-        .select("sex, regions(country_code)")
-        .eq("id", user.id)
-        .maybeSingle();
+      const data = await getProfileRegion();
 
-      const rawSex = (data as any)?.sex as string | null;
+      const rawSex = data.sex;
       const mappedSex: ProfileData["sex"] =
         rawSex === "male" ? "male" : rawSex === "female" ? "female" : "";
 
-      const countryCode = (
-        ((data as any)?.regions as { country_code?: string } | null)?.country_code ?? ""
-      )
-        .trim()
-        .toUpperCase();
+      const region = data.region;
+      const countryCode =
+        region?.country_code?.trim().toUpperCase() || regionNameToIso(region?.name);
 
-      const pd: ProfileData = { country: countryCode, sex: mappedSex };
-      setProfileData(pd);
-      setCountry(countryCode);
-      setSex(mappedSex);
+      const currentYear = new Date().getFullYear();
+      setProfileData({ country: countryCode, sex: mappedSex, referenceYear: currentYear });
     } catch {
-      /* ignore — user can fill manually */
+      // ignore — page renders an empty-country state when profile can't be loaded
     } finally {
       setProfileLoading(false);
     }
@@ -301,28 +331,26 @@ function MatchingPage() {
   }, [loadProfile]);
 
   const handleRun = useCallback(async () => {
-    const trimmed = country.trim().toUpperCase();
+    const trimmed = profileData.country.trim().toUpperCase();
     if (!trimmed || trimmed.length < 2) {
       toast.error(t("match.noCountry"));
       return;
     }
-    if (!session) return;
     setRunning(true);
     setError(null);
     try {
       const res = await runMatching({
         data: {
           country: trimmed,
-          sex: sex || null,
+          sex: profileData.sex || null,
           region: null,
-          reference_year: typeof refYear === "number" ? refYear : null,
-          top_k: topK,
-          include_hierarchy: includeHierarchy,
-          hierarchy_decay: hierarchyDecay,
-          related_decay: relatedDecay,
+          reference_year: profileData.referenceYear,
+          top_k: 20,
+          include_hierarchy: true,
+          hierarchy_decay: 0.6,
+          related_decay: 0.5,
         },
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      } as any);
+      });
       if (res.profile_skill_count === 0) {
         toast.warning(t("match.noSkills"));
       } else if (res.skill_count === 0) {
@@ -336,15 +364,15 @@ function MatchingPage() {
     } finally {
       setRunning(false);
     }
-  }, [country, sex, refYear, topK, includeHierarchy, hierarchyDecay, relatedDecay, session, t]);
+  }, [profileData, t]);
 
   // Auto-run once profile is loaded and country is available
   useEffect(() => {
-    if (profileLoading || hasAutoRun.current || !session) return;
-    if (!country) return;
+    if (profileLoading || hasAutoRun.current) return;
+    if (!profileData.country) return;
     hasAutoRun.current = true;
     handleRun();
-  }, [profileLoading, country, session, handleRun]);
+  }, [profileLoading, profileData.country, handleRun]);
 
   const noCountryInProfile = !profileLoading && !profileData.country;
 
@@ -374,175 +402,33 @@ function MatchingPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-        {/* Config panel */}
-        <aside className="lg:sticky lg:top-[7.5rem] lg:self-start">
-          <div className="space-y-5 rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
-            {/* Profile context */}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <User className="h-3.5 w-3.5 text-primary" />
-              <span className="font-medium text-foreground">{t("match.configTitle")}</span>
-              <span className="ml-auto italic">{t("match.fromProfile")}</span>
-            </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/90 p-4 shadow-sm backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline">{t("match.fromProfile")}</Badge>
+          <Badge variant="secondary">{profileData.country || "—"}</Badge>
+          <Badge variant="secondary">{profileData.sex || t("match.sexAny")}</Badge>
+          <Badge variant="secondary">{String(profileData.referenceYear ?? "—")}</Badge>
+        </div>
+        <Button
+          onClick={handleRun}
+          disabled={running || !profileData.country.trim()}
+          className="h-10 rounded-full px-5 shadow-md shadow-primary/15"
+        >
+          {running ? (
+            <>
+              <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground" />
+              {t("match.running")}
+            </>
+          ) : (
+            <>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {t("match.runBtn")}
+            </>
+          )}
+        </Button>
+      </div>
 
-            {/* Country */}
-            <div className="space-y-1.5">
-              <Label htmlFor="country" className="text-xs font-medium">
-                {t("match.countryLabel")} <span className="text-rose-500">*</span>
-              </Label>
-              {profileLoading ? (
-                <Skeleton className="h-10 rounded-xl" />
-              ) : (
-                <Input
-                  id="country"
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value.slice(0, 3))}
-                  placeholder={t("match.countryPlaceholder")}
-                  className="h-10 rounded-xl uppercase tracking-widest"
-                  maxLength={3}
-                />
-              )}
-            </div>
-
-            {/* Sex */}
-            <div className="space-y-1.5">
-              <Label htmlFor="sex" className="text-xs font-medium">
-                {t("match.sexLabel")}
-              </Label>
-              {profileLoading ? (
-                <Skeleton className="h-10 rounded-xl" />
-              ) : (
-                <Select
-                  value={sex || "any"}
-                  onValueChange={(v) => setSex(v === "any" ? "" : (v as typeof sex))}
-                >
-                  <SelectTrigger id="sex" className="h-10 rounded-xl">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">{t("match.sexAny")}</SelectItem>
-                    <SelectItem value="total">{t("match.sexTotal")}</SelectItem>
-                    <SelectItem value="male">{t("match.sexMale")}</SelectItem>
-                    <SelectItem value="female">{t("match.sexFemale")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-
-            {/* Reference year */}
-            <div className="space-y-1.5">
-              <Label htmlFor="ref-year" className="text-xs font-medium">
-                {t("match.yearLabel")}
-              </Label>
-              <Input
-                id="ref-year"
-                type="number"
-                min={1900}
-                max={2100}
-                value={refYear}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    setRefYear("");
-                    return;
-                  }
-                  const n = Number(raw);
-                  if (!Number.isNaN(n)) setRefYear(n);
-                }}
-                placeholder={t("match.yearPlaceholder")}
-                className="h-10 rounded-xl"
-              />
-            </div>
-
-            {/* Top K */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">
-                {t("match.topKLabel")}:{" "}
-                <span className="font-bold text-primary">{topK}</span>
-              </Label>
-              <Slider
-                min={5}
-                max={50}
-                step={5}
-                value={[topK]}
-                onValueChange={([v]) => setTopK(v)}
-                className="py-1"
-              />
-            </div>
-
-            {/* Advanced */}
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs text-muted-foreground transition hover:text-foreground">
-                <Layers className="h-3.5 w-3.5" />
-                {t("match.advancedToggle")}
-                <ChevronDown
-                  className={cn(
-                    "ml-auto h-3.5 w-3.5 transition-transform",
-                    advancedOpen && "rotate-180",
-                  )}
-                />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-4 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <Label className="text-xs font-medium">{t("match.includeHierarchy")}</Label>
-                  <Switch
-                    checked={includeHierarchy}
-                    onCheckedChange={setIncludeHierarchy}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    {t("match.hierarchyDecay")}:{" "}
-                    <span className="font-bold text-primary">{hierarchyDecay.toFixed(2)}</span>
-                  </Label>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={[hierarchyDecay]}
-                    onValueChange={([v]) => setHierarchyDecay(v)}
-                    className="py-1"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">
-                    {t("match.relatedDecay")}:{" "}
-                    <span className="font-bold text-primary">{relatedDecay.toFixed(2)}</span>
-                  </Label>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={[relatedDecay]}
-                    onValueChange={([v]) => setRelatedDecay(v)}
-                    className="py-1"
-                  />
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
-            <Button
-              onClick={handleRun}
-              disabled={running || !country.trim()}
-              className="h-11 w-full rounded-full shadow-md shadow-primary/15"
-            >
-              {running ? (
-                <>
-                  <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground" />
-                  {t("match.running")}
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  {t("match.runBtn")}
-                </>
-              )}
-            </Button>
-          </div>
-        </aside>
-
-        {/* Results */}
-        <section className="min-w-0 space-y-4">
+      <section className="min-w-0 space-y-4">
           {running && (
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
@@ -616,8 +502,7 @@ function MatchingPage() {
               <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
             </div>
           )}
-        </section>
-      </div>
+      </section>
     </div>
   );
 }

@@ -17,4 +17,4 @@ requires = ["uv_build>=0.8.15,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "backend_matching"
+module-name = "matching_service"

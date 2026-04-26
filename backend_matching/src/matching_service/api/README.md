@@ -2,10 +2,10 @@
 
 ## Run locally
 
-From the project root:
+From the `backend_matching/` directory:
 
 ```bash
-python3 -m uvicorn backend_matching.api.main:app --reload
+uv run uvicorn matching_service.api.main:app --reload
 ```
 
 ## Endpoints

@@ -1,48 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from pathlib import Path
-import sys
 from typing import Any
 
-try:
-    from backend_matching.matching.demand_based.demand_enricher import (
-        OccupationDemandEnricher,
-    )
-    from backend_matching.matching.earnings_based.earnings_enricher import (
-        EarningsEnricher,
-    )
-    from backend_matching.matching.informality_based.informality_enricher import (
-        InformalityEnricher,
-    )
-    from backend_matching.matching.security_based.security_enricher import (
-        OccupationSecurityEnricher,
-    )
-    from backend_matching.matching.skill_based.skill_matcher import SkillBasedMatcher
-    from backend_matching.matching.workload_based.workload_enricher import (
-        OccupationWorkloadEnricher,
-    )
-except ModuleNotFoundError:
-    # Allow direct script execution from src/backend_matching/matching/
-    project_root = Path(__file__).resolve().parents[3]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    from backend_matching.matching.demand_based.demand_enricher import (
-        OccupationDemandEnricher,
-    )
-    from backend_matching.matching.earnings_based.earnings_enricher import (
-        EarningsEnricher,
-    )
-    from backend_matching.matching.informality_based.informality_enricher import (
-        InformalityEnricher,
-    )
-    from backend_matching.matching.security_based.security_enricher import (
-        OccupationSecurityEnricher,
-    )
-    from backend_matching.matching.skill_based.skill_matcher import SkillBasedMatcher
-    from backend_matching.matching.workload_based.workload_enricher import (
-        OccupationWorkloadEnricher,
-    )
+from .demand_based.demand_enricher import OccupationDemandEnricher
+from .earnings_based.earnings_enricher import EarningsEnricher
+from .informality_based.informality_enricher import InformalityEnricher
+from .security_based.security_enricher import OccupationSecurityEnricher
+from .skill_based.skill_matcher import SkillBasedMatcher
+from .workload_based.workload_enricher import OccupationWorkloadEnricher
 
 
 @dataclass
