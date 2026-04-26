@@ -1,0 +1,15 @@
+indicator_id,label,csv_file
+EMP_TEMP_SEX_OCU_NB_A,Employment by sex and occupation (thousands),EMP_TEMP_SEX_OCU_NB_A.csv
+EMP_TEMP_SEX_OC2_NB_A,Employment by sex and occupation - ISCO level 2 (thousands),EMP_TEMP_SEX_OC2_NB_A.csv
+UNE_TUNE_SEX_OCU_NB_A,Unemployment of previously employed persons by sex and former occupation (thousands),UNE_TUNE_SEX_OCU_NB_A.csv
+UNE_TUNE_SEX_OCU_EDU_NB_A,"Unemployment by sex, occupation and education (thousands)",UNE_TUNE_SEX_OCU_EDU_NB_A.csv
+HOW_TEMP_SEX_OC2_NB_A,Mean weekly hours actually worked per employed person by sex and occupation - ISCO level 2,HOW_TEMP_SEX_OC2_NB_A.csv
+HOW_XEES_SEX_OC2_NB_A,Mean weekly hours actually worked per employee by sex and occupation - ISCO level 2,HOW_XEES_SEX_OC2_NB_A.csv
+EMP_NIFL_SEX_OCU_NB_A,Informal employment by sex and occupation (thousands),EMP_NIFL_SEX_OCU_NB_A.csv
+EMP_NIFL_SEX_OCU_RT_A,Informal employment rate by sex and occupation (%),EMP_NIFL_SEX_OCU_RT_A.csv
+EMP_NIFL_SEX_OC2_NB_A,Informal employment by sex and occupation - ISCO level 2 (thousands),EMP_NIFL_SEX_OC2_NB_A.csv
+EMP_NIFL_SEX_OC2_RT_A,Informal employment rate by sex and occupation - ISCO level 2 (%),EMP_NIFL_SEX_OC2_RT_A.csv
+EMP_PIFL_SEX_OC2_NB_A,Employment outside the formal sector by sex and occupation - ISCO level 2 (thousands),EMP_PIFL_SEX_OC2_NB_A.csv
+EMP_PIFL_SEX_OC2_RT_A,Share of employment outside the formal sector by sex and occupation - ISCO level 2 (%),EMP_PIFL_SEX_OC2_RT_A.csv
+EES_TEES_SEX_OCU_NB_A,Employees by sex and occupation (thousands),EES_TEES_SEX_OCU_NB_A.csv
+EES_TEES_SEX_OC2_NB_A,Employees by sex and occupation - ISCO level 2 (thousands),EES_TEES_SEX_OC2_NB_A.csv
