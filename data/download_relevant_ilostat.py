@@ -38,6 +38,13 @@ OCCUPATION_ENRICHER_INDICATOR_IDS = [
     # Priority 5: employees split
     "EES_TEES_SEX_OCU_NB_A",
     "EES_TEES_SEX_OC2_NB_A",
+    # Priority 6: policymaker dashboard requirements
+    # wage floor signal
+    "EAR_INEE_NOC_NB_A",
+    # sector employment baseline (for growth trend computation over time)
+    "EMP_TEMP_SEX_ECO_NB_A",
+    # returns to education (monthly earnings by education level)
+    "EAR_EMTA_SEX_EDU_NB_A",
 ]
 
 # Relevance filters for occupation-matching and local realities.
