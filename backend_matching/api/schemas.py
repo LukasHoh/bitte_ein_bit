@@ -50,3 +50,31 @@ class MatchingRunRequest(BaseModel):
                 )
         return value
 
+
+class AdminSignUpRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=6, max_length=200)
+    country_code: str = Field(min_length=3, max_length=3)
+    region: str = Field(min_length=1, max_length=120)
+
+    @validator("email")
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @validator("country_code")
+    def normalize_country_code(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @validator("region")
+    def normalize_region(cls, value: str) -> str:
+        return value.strip()
+
+
+class AdminSignInRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=6, max_length=200)
+
+    @validator("email")
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+

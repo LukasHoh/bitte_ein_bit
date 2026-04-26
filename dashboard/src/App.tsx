@@ -185,7 +185,8 @@ export default function App() {
         </div>
         <p className="topbar-context">
           {policyData.context.country} · {policyData.context.reference_year ?? "latest"} ·{" "}
-          {policyData.context.sex} · {admin.email}
+          {policyData.context.sex} · ref_area:{customerData.context.ref_area ?? policyData.context.country} ·{" "}
+          {admin.email}
         </p>
         <button className="link-button" onClick={() => void handleSignOut()}>
           Sign out
@@ -367,6 +368,7 @@ export default function App() {
                   <p className="user-name">{profile.name}</p>
                   <p className="muted">
                     {profile.region}, {profile.country}
+                    {profile.ref_area ? ` · ref_area:${profile.ref_area}` : ""}
                   </p>
                 </div>
                 <p className="suggestion">{profile.top_occupation_suggestion}</p>

@@ -6,6 +6,10 @@
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+// #region agent log
+fetch("http://127.0.0.1:7620/ingest/1d44f487-fdc9-42d1-9aa3-417ee6329b35",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"b89e1e"},body:JSON.stringify({sessionId:"b89e1e",runId:"pre-fix",hypothesisId:"H3",location:"frontend/vite.config.ts:9",message:"vite config top-level reached",data:{node:process.version},timestamp:Date.now()})}).catch(()=>{});
+// #endregion
+
 // DuckDB ships native `.node` binaries through `@duckdb/node-bindings*`. Vite's
 // dep optimizer (esbuild) chokes on those, even though the imports only happen
 // inside `*.server.ts` files. Marking the DuckDB packages as external on every

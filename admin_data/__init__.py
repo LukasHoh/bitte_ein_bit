@@ -1,0 +1,2 @@
+"""Admin domain data package."""
+

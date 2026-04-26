@@ -40,6 +40,7 @@ export type CustomerSkillProfile = {
   name: string;
   region: string;
   country: string;
+  ref_area?: string;
   skills: string[];
   top_occupation_suggestion: string;
 };
@@ -55,6 +56,7 @@ export type CustomerSummaryPayload = {
   context: {
     country: string;
     region: string | null;
+    ref_area?: string;
   };
   totals: {
     users_total_country: number;
