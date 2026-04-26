@@ -89,16 +89,23 @@ def embed_csv_to_pinecone() -> None:
 
     csv_path = Path(os.getenv("SKILLS_CSV_PATH", "src/skills/skills_en.csv"))
     namespace = os.getenv("PINECONE_NAMESPACE", "skills-en")
-    embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
     embedding_dimensions = os.getenv("EMBEDDING_DIMENSIONS")
     batch_size = int(os.getenv("UPSERT_BATCH_SIZE", "100"))
 
     rows = _load_rows(csv_path)
     texts = [_pick_text(row) for row in rows]
 
-    embeddings_kwargs: dict[str, Any] = {"model": embedding_model, "api_key": openai_api_key}
+    embeddings_kwargs: dict[str, Any] = {
+        "model": embedding_model, 
+        "api_key": openai_api_key,  
+    }
     if embedding_dimensions:
         embeddings_kwargs["dimensions"] = int(embedding_dimensions)
+    elif pinecone_index_dimensions:
+        embeddings_kwargs["dimensions"] = int(pinecone_index_dimensions)
+    else:
+        raise ValueError("Either EMBEDDING_DIMENSIONS or PINECONE_INDEX_DIMENSIONS must be set.")
     embeddings_client = OpenAIEmbeddings(**embeddings_kwargs)
     vector_store = PineconeVectorStore(
         index_name=pinecone_index_name,

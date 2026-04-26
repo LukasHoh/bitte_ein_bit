@@ -3,8 +3,11 @@
   "python_version": "3.13",
   "dependencies": ["."],
   "graphs": {
-    "agent": "simple_agent.graph:graph"
+    "agent": "agent.graph:graph"
   },
   "env": ".env",
-  "image_distro": "wolfi"
+  "image_distro": "wolfi",
+  "http": {
+    "app": "./src/webapp/webapp.py:app"
+  }
 }
